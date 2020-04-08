@@ -20,11 +20,11 @@
 #include <asm/processor.h>
 #include <linux/crypto.h>
 
-//========================Filter Declaration==START==Author: @wzs82868996==================
+//========================Filter Declaration==START========================================
 
 //=========================Filter Declaration==END=========================================
 
-//========================Logger Declaration==START==Author: @Dracula1998==================
+//========================Logger Declaration==START========================================
 
 #define LOG_LEVEL LOGGER_OK
 
@@ -204,7 +204,7 @@ void log_message(char *source, int level, char *message)
 
 //========================Logger Implementation==END=======================================
 
-//========================Kernel Module Implementation==START==Author: @Tomahawkd==========
+//========================Kernel Module Implementation=====================================
 static struct nf_hook_ops nfho_dns_in;
 static struct nf_hook_ops nfho_dns_out;
 
