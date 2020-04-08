@@ -234,10 +234,10 @@ static int __init hook_init(void)
 
     nfho_dns_in.hook = dns_in_func;
     nfho_dns_in.pf = NFPROTO_IPV4;
-    nfho_dns_in.hooknum = NF_INET_LOCAL_OUT;
+    nfho_dns_in.hooknum = NF_INET_LOCAL_IN;
     nfho_dns_in.priority = NF_IP_PRI_FIRST;
 
-    nfho_dns_out.hook = dns_in_func;
+    nfho_dns_out.hook = dns_out_func;
     nfho_dns_out.pf = NFPROTO_IPV4;
     nfho_dns_out.hooknum = NF_INET_LOCAL_OUT;
     nfho_dns_out.priority = NF_IP_PRI_FIRST;
