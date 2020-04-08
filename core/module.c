@@ -16,11 +16,11 @@
 #include <linux/string.h>
 #include <linux/types.h>
 #include <linux/unistd.h>
-#include <linux/crypto.h>
 #include <asm/uaccess.h>
 #include <asm/processor.h>
+#include <linux/crypto.h>
 
-//===================================Filter Declaration==START========================================
+//========================Filter Declaration==START==Author: @wzs82868996==================
 
 //=========================Filter Declaration==END=========================================
 
@@ -44,11 +44,11 @@ void close_writer(void);
 
 //========================Logger Declaration==END==========================================
 
-//========================Filter Implementation==START=====================================
+//================================Filter Implementation==START=============================
 
 //================================Filter Implementation==END===============================
 
-//================================Logger Implementation==START==============================
+//=============================Logger Implementation==START================================
 
 struct file *file;
 
@@ -204,54 +204,46 @@ void log_message(char *source, int level, char *message)
 
 //========================Logger Implementation==END=======================================
 
-//========================Kernel Module Implementation==START===============================
-struct nf_hook_ops nfho_out = {
-    .list = {NULL, NULL},
-    .hook = dns_out,
-    .pf = NFPROTO_IPV4,
-    .hooknum = NF_INET_LOCAL_OUT,
-    .priority = NF_IP_PRI_FIRST + 1};
-struct nf_hook_ops nfho_in = {
-    .list = {NULL, NULL},
-    .hook = dns_in,
-    .pf = NFPROTO_IPV4,
-    .hooknum = NF_INET_LOCAL_IN,
-    .priority = NF_IP_PRI_FIRST + 1};
+//========================Kernel Module Implementation==START==Author: @Tomahawkd==========
+static struct nf_hook_ops nfho_dns_in;
+static struct nf_hook_ops nfho_dns_out;
 
-unsigned int
-dns_out(unsigned int hooknum,
-        struct sk_buff *skb,
-        const struct net_device *in,
-        const struct net_device *out,
-        int (*okfn)(struct sk_buff *))
+unsigned int dns_in_func(void *priv, struct sk_buff *skb, const struct nf_hook_state *state)
 {
     char message[128];
-    sprintf(message, "capture a outcome packet");
-    log_message("Hook init", LOGGER_OK, message);
+    sprintf(message, "a new dns income packet %d", 0);
+    log_message("Capture:", LOGGER_OK, message);
     return NF_ACCEPT;
-};
+}
 
-unsigned int
-dns_in(unsigned int hooknum,
-       struct sk_buff *skb,
-       const struct net_device *in,
-       const struct net_device *out,
-       int (*okfn)(struct sk_buff *))
+unsigned int dns_out_func(void *priv, struct sk_buff *skb, const struct nf_hook_state *state)
 {
     char message[128];
-    sprintf(message, "capture a income packet");
-    log_message("Hook init", LOGGER_OK, message);
+    sprintf(message, "capture a new dns outcome packet %d", 0);
+    log_message("Capture:", LOGGER_OK, message);
     return NF_ACCEPT;
-};
+}
 
 static int __init hook_init(void)
 {
     int ret = 0;
+    struct net *n;
     char message[128];
 
     init_writer();
-    nf_register_hook(&dns_in);
-    nf_register_hook(&dns_out);
+
+    nfho_dns_in.hook = dns_in_func;
+    nfho_dns_in.pf = NFPROTO_IPV4;
+    nfho_dns_in.hooknum = NF_INET_LOCAL_OUT;
+    nfho_dns_in.priority = NF_IP_PRI_FIRST;
+
+    nfho_dns_out.hook = dns_in_func;
+    nfho_dns_out.pf = NFPROTO_IPV4;
+    nfho_dns_out.hooknum = NF_INET_LOCAL_OUT;
+    nfho_dns_out.priority = NF_IP_PRI_FIRST;
+
+    for_each_net(n) ret += nf_register_net_hook(n, &nfho_dns_in);
+    for_each_net(n) ret += nf_register_net_hook(n, &nfho_dns_out);
 
     sprintf(message, "nf_register_hook returnd %d", ret);
     log_message("Hook init", LOGGER_OK, message);
@@ -261,9 +253,12 @@ static int __init hook_init(void)
 
 static void __exit hook_exit(void)
 {
+    struct net *n;
+
     log_message("Hook exit", LOGGER_OK, "Hook deinit");
 
-    for_each_net(n) nf_unregister_net_hook(n, &nfho);
+    for_each_net(n) nf_unregister_net_hook(n, &nfho_dns_in);
+    for_each_net(n) nf_unregister_net_hook(n, &nfho_dns_out);
 
     close_writer();
 }
@@ -271,5 +266,6 @@ static void __exit hook_exit(void)
 module_init(hook_init);
 module_exit(hook_exit);
 
+MODULE_LICENSE("Dual MIT/GPL");
 MODULE_AUTHOR("Dracula1998");
 //========================Kernel Module Implementation==END================================

@@ -4,7 +4,7 @@ yes
 endef
 
 PWD  := $(shell pwd)
-NAME = firewallmodule
+NAME = DNSEnctyptermodule
 
 obj-m += $(NAME).o
 $(NAME)-objs := module.o
