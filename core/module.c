@@ -211,6 +211,38 @@ static struct nf_hook_ops nfho_dns_out;
 unsigned int dns_in_func(void *priv, struct sk_buff *skb, const struct nf_hook_state *state)
 {
     char message[128];
+    struct iphdr *ip;
+    struct udphdr *udp;
+
+    if(!skb)
+    {
+        sprintf(message, "this is not a valid packet", 0);
+        log_message("Release", LOGGER_OK, message);
+        return NF_ACCEPT;
+    }
+
+    if(skb->protocol != htons(0x0800)) //capture ip packets, release arp packets
+    {
+        sprintf(message, "this is not a ip packet", 0);
+        log_message("Release", LOGGER_OK, message);
+        return NF_ACCEPT;
+    }
+    ip = ip_hdr(skb);
+    if ((ip->protocol != 17)) //capture udp packets
+    {
+        sprintf(message, "this is not a udp packet", 0);
+        log_message("Release", LOGGER_OK, message);
+        return NF_ACCEPT;
+    }
+    
+    udp = udp_hdr(skb);
+    if (ntohs(udp->dest) != 53) //capture DNS packets
+    {
+        sprintf(message, "this is not a dns packet", 0);
+        log_message("Release", LOGGER_OK, message);
+        return NF_ACCEPT;
+    }
+    
     sprintf(message, "a new dns income packet %d", 0);
     log_message("Capture:", LOGGER_OK, message);
     return NF_ACCEPT;
@@ -219,6 +251,38 @@ unsigned int dns_in_func(void *priv, struct sk_buff *skb, const struct nf_hook_s
 unsigned int dns_out_func(void *priv, struct sk_buff *skb, const struct nf_hook_state *state)
 {
     char message[128];
+    struct iphdr *ip;
+    struct udphdr *udp;
+
+    if(!skb)
+    {
+        sprintf(message, "this is not a valid packet", 0);
+        log_message("Release", LOGGER_OK, message);
+        return NF_ACCEPT;
+    }
+
+    if(skb->protocol != htons(0x0800)) //capture ip packets, release arp packets
+    {
+        sprintf(message, "this is not a ip packet", 0);
+        log_message("Release", LOGGER_OK, message);
+        return NF_ACCEPT;
+    }
+    ip = ip_hdr(skb);
+    if ((ip->protocol != 17)) //capture udp packets
+    {
+        sprintf(message, "this is not a udp packet", 0);
+        log_message("Release", LOGGER_OK, message);
+        return NF_ACCEPT;
+    }
+    
+    udp = udp_hdr(skb);
+    if (ntohs(udp->source) != 53) //capture DNS packets
+    {
+        sprintf(message, "this is not a dns packet", 0);
+        log_message("Release", LOGGER_OK, message);
+        return NF_ACCEPT;
+    }
+
     sprintf(message, "capture a new dns outcome packet %d", 0);
     log_message("Capture:", LOGGER_OK, message);
     return NF_ACCEPT;
