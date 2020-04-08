@@ -16,10 +16,11 @@
 #include <linux/string.h>
 #include <linux/types.h>
 #include <linux/unistd.h>
+#include <linux/crypto.h>
 #include <asm/uaccess.h>
 #include <asm/processor.h>
 
-//========================Filter Declaration==START==Author: @wzs82868996==================
+//===================================Filter Declaration==START========================================
 typedef struct Node {
     unsigned int sip;
     unsigned short port;
@@ -81,226 +82,213 @@ void close_writer(void);
 
 
 
+//========================Filter Implementation==START=====================================
+// void addRule(struct Node *node) {
+//     Node *p;
+//     p = (Node *)kmalloc(sizeof(Node), 0);
+//     memcpy(p, node, sizeof(struct Node));
+//     p->next = NULL;
+//     if (head->next == NULL && tail->next == NULL) {
+//         head->next = p;
+//         tail->next = p;
+//     }
+//     else {
+//         tail->next->next = p;
+//         tail->next = p;
+//     }
+//     log_message("Add Rule", LOGGER_OK, "A new rule added.");
+// }
 
-//========================Messager Declaration==START==Author: @Vshows=====================
+// void deleteRule(struct Node *node) {
+//     if (head->next != NULL || tail->next != NULL) {
+//         Node *p = head;
+//         Node *pp = p;
+//         while (p && p->next != NULL) {
+//             pp = p;
+//             p = p->next;
 
+//             if(p->sip != node->sip)
+//                 continue;
+//             if(p->port != node->port)
+//                 continue;
+//             if(p->protocol != node->protocol)
+//                 continue;
+//             if(p->mask != node->mask)
+//                 continue;
+//             if(p->isPermit != node->isPermit)
+//                 continue;
 
-//========================Messager Declaration==END========================================
+//             if(pp->next == head->next) {
+//                 head->next = NULL;
+//                 tail->next = NULL;
+//             }
+//             else if(tail->next == pp->next) {
+//                 tail->next = pp;
+//                 pp->next = NULL;
+//             }
+//             else
+//                 pp->next = p->next;
+//             break;
+//         }
+//         kfree(p);
+//     }
+//     log_message("Delete Rule", LOGGER_OK, "Rules deleted.");
+// }
 
+// void clearRule(void) {
+//     Node *p = head;
+//     Node *t = NULL;
+//     while (p && p->next != NULL) {
+//         p = p->next;
+//         t = p->next;
+//         kfree(p);
+//         p = t;
+//     }
+//     head->next = NULL;
+//     tail->next = NULL;
+//     log_message("Clear Rule", LOGGER_OK, "Rules cleared.");
+// }
 
-//========================Messager Implementation==START==Author: @Vshows==================
+// long cdev_ioctl(struct file *file, unsigned int cmd, unsigned long arg) {
+//     Node node;
+//     copy_from_user(&node,(struct Node *)arg, sizeof(struct Node));
+//     switch (cmd) {
+//         case 0:
+//             addRule(&node);
+//             break;
+//         case 1:
+//             deleteRule(&node);
+//             break;
+//         case 2:
+//             clearRule();
+//             break;
+//     }
+//     return 0;
+// }
 
+// unsigned int times_contains(unsigned char *s, unsigned char *c, unsigned int lens, unsigned int lenc) {
+//     unsigned int i = 0, j = 0, count = 0;
+//     while (i < lens && j < lenc){
+//         if (s[i] == c[j]) {
+//             i++;
+//             j++;
+//         } else {
+//             i -= j - 1;
+//             j = 0;
+//         }
+//         if (j == lenc) {
+//             count++;
+//             j = 0;
+//         }
+//     }
+//     return count;
+// }
 
-//========================Messager Implementation==END=====================================
+// bool check_ip(struct iphdr *ip, unsigned short sport) {
+//     Node *p = head;
+//     unsigned int sip;
+//     unsigned short port;
+//     unsigned short mask;
 
+//     while(p->next != NULL) {
+//         p = p->next;
+//         if (p->isPermit)
+//             continue;
+//         sip = p->sip;
+//         port = p->port;
+//         mask = p->mask;
 
-//========================Filter Implementation==START==Author: @wzs82868996===============
-void addRule(struct Node *node) {
-    Node *p;
-    p = (Node *)kmalloc(sizeof(Node), 0);
-    memcpy(p, node, sizeof(struct Node));
-    p->next = NULL;
-    if (head->next == NULL && tail->next == NULL) {
-        head->next = p;
-        tail->next = p;
-    }
-    else {
-        tail->next->next = p;
-        tail->next = p;
-    }
-    log_message("Add Rule", LOGGER_OK, "A new rule added.");
-}
+//         if ((ip->saddr & mask) != (sip & mask))
+//             continue;
 
-void deleteRule(struct Node *node) {
-    if (head->next != NULL || tail->next != NULL) {
-        Node *p = head;
-        Node *pp = p;
-        while (p && p->next != NULL) {
-            pp = p;
-            p = p->next;
+//         if (ip->protocol != p->protocol && p->protocol != 0)
+//             continue;
 
-            if(p->sip != node->sip)
-                continue;
-            if(p->port != node->port)
-                continue;
-            if(p->protocol != node->protocol)
-                continue;
-            if(p->mask != node->mask)
-                continue;
-            if(p->isPermit != node->isPermit)
-                continue;
+//         if (sport != port && port != 0)
+//            continue;
 
-            if(pp->next == head->next) {
-                head->next = NULL;
-                tail->next = NULL;
-            }
-            else if(tail->next == pp->next) {
-                tail->next = pp;
-                pp->next = NULL;
-            }
-            else
-                pp->next = p->next;
-            break;
-        }
-        kfree(p);
-    }
-    log_message("Delete Rule", LOGGER_OK, "Rules deleted.");
-}
+//         char info[256];
+//         sprintf(info, "IP[%u.%u.%u.%u] port %u blocked!", ip->saddr & 255u, ip->saddr >> 8u & 255u, ip->saddr >> 16u & 255u, ip->saddr >> 24u & 255u, port);
+//         log_message("Check IP", LOGGER_WARN, info);
+//         return false;
+//     }
+//     return true;
+// }
 
-void clearRule(void) {
-    Node *p = head;
-    Node *t = NULL;
-    while (p && p->next != NULL) {
-        p = p->next;
-        t = p->next;
-        kfree(p);
-        p = t;
-    }
-    head->next = NULL;
-    tail->next = NULL;
-    log_message("Clear Rule", LOGGER_OK, "Rules cleared.");
-}
+// bool check_sc(unsigned char *data, unsigned int length) {
+//     unsigned char pushl_vsh[] = "\x68\x2f\x2f\x73\x68";
+//     unsigned char pushl_sh[] = "\x68\x2f\x73\x68";
+//     unsigned char pushl_bin[] = "\x68\x2f\x74\x6d\x70";
+//     unsigned char nop[] = "\x90";
+//     unsigned char intrpt[] = "\x80";
+//     unsigned char intrpt_win10[] = "\xcc";
+//     unsigned int nop_threshold = 10;
+//     unsigned int int_threshold = 3;
+//     bool nop_sled = false, instuct_int = false;
+//     if (times_contains(data, nop, length, 1) > nop_threshold)
+//         nop_sled = true;
 
-long cdev_ioctl(struct file *file, unsigned int cmd, unsigned long arg) {
-    Node node;
-    copy_from_user(&node,(struct Node *)arg, sizeof(struct Node));
-    switch (cmd) {
-        case 0:
-            addRule(&node);
-            break;
-        case 1:
-            deleteRule(&node);
-            break;
-        case 2:
-            clearRule();
-            break;
-    }
-    return 0;
-}
+//     if (times_contains(data, intrpt, length, 1) > int_threshold)
+//         instuct_int = true;
 
-unsigned int times_contains(unsigned char *s, unsigned char *c, unsigned int lens, unsigned int lenc) {
-    unsigned int i = 0, j = 0, count = 0;
-    while (i < lens && j < lenc){
-        if (s[i] == c[j]) {
-            i++;
-            j++;
-        } else {
-            i -= j - 1;
-            j = 0;
-        }
-        if (j == lenc) {
-            count++;
-            j = 0;
-        }
-    }
-    return count;
-}
+//     if (times_contains(data, intrpt_win10, length, 1) > int_threshold)
+//         instuct_int = true;
 
-bool check_ip(struct iphdr *ip, unsigned short sport) {
-    Node *p = head;
-    unsigned int sip;
-    unsigned short port;
-    unsigned short mask;
+//     if (times_contains(data, pushl_vsh, length, 5) != 0) {
+//         if (nop_sled)
+//             log_message("Check SC", LOGGER_WARN, "NOP sled detected!");
+//         if (instuct_int)
+//             log_message("Check SC", LOGGER_WARN, "Instruction INT detected!");
+//         log_message("Check SC", LOGGER_WARN, "Suspicious \"//sh\" detected. Is there an \"execve\"?");
+//         return false;
+//     }
 
-    while(p->next != NULL) {
-        p = p->next;
-        if (p->isPermit)
-            continue;
-        sip = p->sip;
-        port = p->port;
-        mask = p->mask;
+//     if (times_contains(data, pushl_sh, length, 4) != 0) {
+//         if (nop_sled)
+//             log_message("Check SC", LOGGER_WARN, "NOP sled detected!");
+//         if (instuct_int)
+//             log_message("Check SC", LOGGER_WARN, "Instruction INT detected!");
+//         log_message("Check SC", LOGGER_WARN, "Suspicious \"/sh\" detected. Is there an \"execve\"?");
+//         return false;
+//     }
 
-        if ((ip->saddr & mask) != (sip & mask))
-            continue;
+//     if (times_contains(data, pushl_bin, length, 5) != 0) {
+//         if (nop_sled)
+//             log_message("Check SC", LOGGER_WARN, "NOP sled detected!");
+//         if (instuct_int)
+//             log_message("Check SC", LOGGER_WARN, "Instruction INT detected!");
+//         log_message("Check SC", LOGGER_WARN, "Suspicious \"/bin\" detected. Is there an \"execve\"?");
+//         return false;
+//     }
 
-        if (ip->protocol != p->protocol && p->protocol != 0)
-            continue;
+//     return true;
+// }
 
-        if (sport != port && port != 0)
-           continue;
+// FILTER_BOOL check_tcp(struct iphdr *ip, struct tcphdr *tcp, unsigned char *data, unsigned int length) {
+//     if(!check_ip(ip, tcp->source))
+//         return FILTER_FALSE;
 
-        char info[256];
-        sprintf(info, "IP[%u.%u.%u.%u] port %u blocked!", ip->saddr & 255u, ip->saddr >> 8u & 255u, ip->saddr >> 16u & 255u, ip->saddr >> 24u & 255u, port);
-        log_message("Check IP", LOGGER_WARN, info);
-        return false;
-    }
-    return true;
-}
+//     if(!check_sc(data, length))
+//         return FILTER_FALSE;
 
-bool check_sc(unsigned char *data, unsigned int length) {
-    unsigned char pushl_vsh[] = "\x68\x2f\x2f\x73\x68";
-    unsigned char pushl_sh[] = "\x68\x2f\x73\x68";
-    unsigned char pushl_bin[] = "\x68\x2f\x74\x6d\x70";
-    unsigned char nop[] = "\x90";
-    unsigned char intrpt[] = "\x80";
-    unsigned char intrpt_win10[] = "\xcc";
-    unsigned int nop_threshold = 10;
-    unsigned int int_threshold = 3;
-    bool nop_sled = false, instuct_int = false;
-    if (times_contains(data, nop, length, 1) > nop_threshold)
-        nop_sled = true;
+//     return FILTER_TRUE;
+// }
 
-    if (times_contains(data, intrpt, length, 1) > int_threshold)
-        instuct_int = true;
+// FILTER_BOOL check_udp(struct iphdr *ip, struct udphdr *udp, unsigned char *data, unsigned int length) {
+//     if(!check_ip(ip, udp->source))
+//         return FILTER_FALSE;
 
-    if (times_contains(data, intrpt_win10, length, 1) > int_threshold)
-        instuct_int = true;
+//     if(!check_sc(data, length))
+//         return FILTER_FALSE;
 
-    if (times_contains(data, pushl_vsh, length, 5) != 0) {
-        if (nop_sled)
-            log_message("Check SC", LOGGER_WARN, "NOP sled detected!");
-        if (instuct_int)
-            log_message("Check SC", LOGGER_WARN, "Instruction INT detected!");
-        log_message("Check SC", LOGGER_WARN, "Suspicious \"//sh\" detected. Is there an \"execve\"?");
-        return false;
-    }
-
-    if (times_contains(data, pushl_sh, length, 4) != 0) {
-        if (nop_sled)
-            log_message("Check SC", LOGGER_WARN, "NOP sled detected!");
-        if (instuct_int)
-            log_message("Check SC", LOGGER_WARN, "Instruction INT detected!");
-        log_message("Check SC", LOGGER_WARN, "Suspicious \"/sh\" detected. Is there an \"execve\"?");
-        return false;
-    }
-
-    if (times_contains(data, pushl_bin, length, 5) != 0) {
-        if (nop_sled)
-            log_message("Check SC", LOGGER_WARN, "NOP sled detected!");
-        if (instuct_int)
-            log_message("Check SC", LOGGER_WARN, "Instruction INT detected!");
-        log_message("Check SC", LOGGER_WARN, "Suspicious \"/bin\" detected. Is there an \"execve\"?");
-        return false;
-    }
-
-    return true;
-}
-
-FILTER_BOOL check_tcp(struct iphdr *ip, struct tcphdr *tcp, unsigned char *data, unsigned int length) {
-    if(!check_ip(ip, tcp->source))
-        return FILTER_FALSE;
-
-    if(!check_sc(data, length))
-        return FILTER_FALSE;
-
-    return FILTER_TRUE;
-}
-
-FILTER_BOOL check_udp(struct iphdr *ip, struct udphdr *udp, unsigned char *data, unsigned int length) {
-    if(!check_ip(ip, udp->source))
-        return FILTER_FALSE;
-
-    if(!check_sc(data, length))
-        return FILTER_FALSE;
-
-    return FILTER_TRUE;
-}
-//========================Filter Implementation==END==Author: @wzs82868996=================
+//     return FILTER_TRUE;
+// }
+//================================Filter Implementation==END===============================
 
 
 
 
-//========================Logger Implementation==START==Author: @Dracula1998===============
+//================================Logger Implementation==START==============================
 
 struct file *file;
 
@@ -430,7 +418,7 @@ void log_message(char *source, int level, char *message) {
 
     get_current_time(time);
 
-    log_str = kmalloc(32 + 2 + source_len + 2 + strlen(level_str) + 1 + message_len + 2);
+    log_str = kmalloc(32 + 2 + source_len + 2 + strlen(level_str) + 1 + message_len + 2, GFP_KERNEL);
 
     sprintf(log_str, "%s [%s] %s %s", time, source, level_str, message);
     print_console(level, log_str);
