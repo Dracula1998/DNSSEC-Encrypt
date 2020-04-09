@@ -20,6 +20,9 @@
 #define LOGGER_WARN 3
 #define LOGGER_FATAL 4
 
+#define DNS_PACKET_NO 0
+#define DNS_PACKET_YES 1
+
 
 // ==== console color ====
 

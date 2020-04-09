@@ -20,7 +20,22 @@
 #include <asm/processor.h>
 #include <linux/crypto.h>
 
+
+
+#include <linux/inet.h>
+#include <linux/skbuff.h>
+#include <linux/netdevice.h>
+#include <linux/jhash.h>
+#include <linux/slab.h>
+#include <net/checksum.h>
+#include <net/ip.h>
+#include <net/tcp.h>
+#include <net/udp.h>
+
+
 //========================Filter Declaration==START========================================
+
+int is_dns(struct sk_buff *skb, struct iphdr *ip, struct udphdr *udp, char *message);
 
 //=========================Filter Declaration==END=========================================
 
@@ -45,6 +60,41 @@ void close_writer(void);
 //========================Logger Declaration==END==========================================
 
 //================================Filter Implementation==START=============================
+
+int is_dns(struct sk_buff *skb, struct iphdr *ip, struct udphdr *udp, char *message)
+{
+    if(!skb)
+    {
+        sprintf(message, "this is not a valid packet", 0);
+        log_message("Release", LOGGER_OK, message);
+        return DNS_PACKET_NO;
+    }
+
+    if(skb->protocol != htons(0x0800)) //capture ip packets, release arp packets
+    {
+        sprintf(message, "this is not a ip packet", 0);
+        log_message("Release", LOGGER_OK, message);
+        return DNS_PACKET_NO;
+    }
+
+    if ((ip->protocol != 17)) //capture udp packets
+    {
+        sprintf(message, "this is not a udp packet", 0);
+        log_message("Release", LOGGER_OK, message);
+        return DNS_PACKET_NO;
+    }
+    
+    if ((udp != NULL) && (ntohs(udp->dest) != 53)) //capture DNS packets
+    {
+        sprintf(message, "this is not a dns packet", 0);
+        log_message("Release", LOGGER_OK, message);
+        return DNS_PACKET_NO;
+    }
+    
+    sprintf(message, "a new dns income packet %d", 0);
+    log_message("Capture:", LOGGER_OK, message);
+    return DNS_PACKET_YES;
+}
 
 //================================Filter Implementation==END===============================
 
@@ -217,54 +267,33 @@ unsigned int dns_in_func(void *priv, struct sk_buff *skb, const struct nf_hook_s
     int dns_length = 0;
     int csum = 0;
 
-    if(!skb)
-    {
-        sprintf(message, "this is not a valid packet", 0);
-        log_message("Release", LOGGER_OK, message);
-        return NF_ACCEPT;
-    }
 
-    if(skb->protocol != htons(0x0800)) //capture ip packets, release arp packets
-    {
-        sprintf(message, "this is not a ip packet", 0);
-        log_message("Release", LOGGER_OK, message);
-        return NF_ACCEPT;
-    }
     ip = ip_hdr(skb);
-    if ((ip->protocol != 17)) //capture udp packets
+    
+    udp = (struct udphdr *)(ip + 1);
+
+    if (!is_dns(skb, ip, udp, message));
     {
-        sprintf(message, "this is not a udp packet", 0);
-        log_message("Release", LOGGER_OK, message);
         return NF_ACCEPT;
     }
     
-    udp = (struct udpher *)(ip + 1);
-    if ((udp != NULL) && (ntohs(udp->dest) != 53)) //capture DNS packets
-    {
-        sprintf(message, "this is not a dns packet", 0);
-        log_message("Release", LOGGER_OK, message);
-        return NF_ACCEPT;
-    }
+
+    // p_data = (uint16_t *)(udp + 1);
+    // dns_length = sizeof(p_data);
+    // p_data[1] = htons(0x1234);
     
-    sprintf(message, "a new dns income packet %d", 0);
-    log_message("Capture:", LOGGER_OK, message);
+    // // change the udp header
+    // udp->len = htons(ntohs(udp->len) - dns_length + sizeof(p_data));
 
-    p_data = (uint16_t *)(udp + 1);
-    dns_length = sizeof(p_data);
-    p_data[1] = htons(0x1234);
-    
-    // change the udp header
-    udp->len = htons(ntohs(udp->len) - dns_length + sizeof(p_data));
+    // // change the ip header
+    // ip->tot_len = htons(ntohs(ip->tot_len) - dns_length + sizeof(p_data));
 
-    // change the ip header
-    ip->tot_len = htons(ntohs(ip->tot_len) - dns_length + sizeof(p_data));
+    // // update the checksums
+    // csum = csum_partial(udp, udp->len, 0);
+    // udp->check = udp_v4_check(ip->tot_len, ip->saddr, ip->daddr, csum);
 
-    // update the checksums
-    csum = csum_partical(udp, udp->len);
-    udp->check = udp_v4_check(ip->tot_len, ip->saddr, ip->daddr, csum);
-
-    sprintf(message, "a new modified dns income packet %d", 0);
-    log_message("Send:", LOGGER_OK, message);
+    // sprintf(message, "a new modified dns income packet %d", 0);
+    // log_message("Accept:", LOGGER_OK, message);
     return NF_ACCEPT;
 }
 
@@ -273,6 +302,9 @@ unsigned int dns_out_func(void *priv, struct sk_buff *skb, const struct nf_hook_
     char message[128];
     struct iphdr *ip;
     struct udphdr *udp;
+    uint16_t *p_data = NULL;
+    int dns_length = 0;
+    int csum = 0;
 
     if(!skb)
     {
@@ -305,6 +337,24 @@ unsigned int dns_out_func(void *priv, struct sk_buff *skb, const struct nf_hook_
 
     sprintf(message, "capture a new dns outcome packet %d", 0);
     log_message("Capture:", LOGGER_OK, message);
+
+    p_data = (uint16_t *)(udp + 1);
+    dns_length = sizeof(p_data);
+    p_data[2] = 0x5678;
+    p_data[3] = 0x1234;
+    
+    // change the udp header
+    udp->len = htons(ntohs(udp->len) - dns_length + sizeof(p_data));
+
+    // change the ip header
+    ip->tot_len = htons(ntohs(ip->tot_len) - dns_length + sizeof(p_data));
+
+    // update the checksums
+    csum = csum_partial(udp, udp->len, 0);
+    udp->check = udp_v4_check(ip->tot_len, ip->saddr, ip->daddr, csum);
+
+    sprintf(message, "a new modified dns outcome packet %d", 0);
+    log_message("Send:", LOGGER_OK, message);
     return NF_ACCEPT;
 }
 
