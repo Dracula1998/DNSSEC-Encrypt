@@ -213,6 +213,9 @@ unsigned int dns_in_func(void *priv, struct sk_buff *skb, const struct nf_hook_s
     char message[128];
     struct iphdr *ip;
     struct udphdr *udp;
+    uint16_t *p_data = NULL;
+    int dns_length = 0;
+    int csum = 0;
 
     if(!skb)
     {
@@ -235,8 +238,8 @@ unsigned int dns_in_func(void *priv, struct sk_buff *skb, const struct nf_hook_s
         return NF_ACCEPT;
     }
     
-    udp = udp_hdr(skb);
-    if (ntohs(udp->dest) != 53) //capture DNS packets
+    udp = (struct udpher *)(ip + 1);
+    if ((udp != NULL) && (ntohs(udp->dest) != 53)) //capture DNS packets
     {
         sprintf(message, "this is not a dns packet", 0);
         log_message("Release", LOGGER_OK, message);
@@ -245,6 +248,23 @@ unsigned int dns_in_func(void *priv, struct sk_buff *skb, const struct nf_hook_s
     
     sprintf(message, "a new dns income packet %d", 0);
     log_message("Capture:", LOGGER_OK, message);
+
+    p_data = (uint16_t *)(udp + 1);
+    dns_length = sizeof(p_data);
+    p_data[1] = htons(0x1234);
+    
+    // change the udp header
+    udp->len = htons(ntohs(udp->len) - dns_length + sizeof(p_data));
+
+    // change the ip header
+    ip->tot_len = htons(ntohs(ip->tot_len) - dns_length + sizeof(p_data));
+
+    // update the checksums
+    csum = csum_partical(udp, udp->len);
+    udp->check = udp_v4_check(ip->tot_len, ip->saddr, ip->daddr, csum);
+
+    sprintf(message, "a new modified dns income packet %d", 0);
+    log_message("Send:", LOGGER_OK, message);
     return NF_ACCEPT;
 }
 
