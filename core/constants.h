@@ -22,7 +22,8 @@
 
 #define DNS_PACKET_NO 0
 #define DNS_PACKET_YES 1
-
+#define DNS_PACKET_QUERY 2
+#define DNS_PACKET_RESPONSE 3
 
 // ==== console color ====
 
