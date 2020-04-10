@@ -30,6 +30,12 @@
 #include <net/tcp.h>
 #include <net/udp.h>
 
+#include <linux/scatterlist.h>
+#include <linux/gfp.h>
+#include <linux/err.h>
+#include <linux/syscalls.h>
+#include <linux/highmem.h>
+
 //========================Filter Declaration==START========================================
 
 /**
@@ -43,12 +49,13 @@
  */
 int is_dns(struct sk_buff *skb, struct iphdr *ip, struct udphdr *udp, char *message);
 
-
 int dns_type(struct udphdr *udp, char *message);
-
 
 void update_check_sum(struct iphdr *ip, struct udphdr *udp, uint16_t *dns_data, char *message);
 
+int aes_encrypt(char *data, char *key, char *iv, int length, char *message);
+
+int aes_decrypt(char *data, char *key, char *iv, int length, char *message);
 //=========================Filter Declaration==END=========================================
 
 //========================Logger Declaration==START========================================
@@ -98,12 +105,10 @@ int is_dns(struct sk_buff *skb, struct iphdr *ip, struct udphdr *udp, char *mess
         return DNS_PACKET_NO;
     }
 
-
     if (udp == NULL)
     {
         return DNS_PACKET_NO;
     }
-    
 
     //capture DNS packets
     if ((udp != NULL) && (ntohs(udp->dest) != 53) && (ntohs(udp->source) != 53))
@@ -118,7 +123,6 @@ int is_dns(struct sk_buff *skb, struct iphdr *ip, struct udphdr *udp, char *mess
 
     return DNS_PACKET_YES;
 }
-
 
 int dns_type(struct udphdr *udp, char *message)
 {
@@ -135,7 +139,6 @@ int dns_type(struct udphdr *udp, char *message)
         return DNS_PACKET_RESPONSE;
     }
 }
-
 
 void update_check_sum(struct iphdr *ip, struct udphdr *udp, uint16_t *dns_data, char *message)
 {
@@ -155,6 +158,124 @@ void update_check_sum(struct iphdr *ip, struct udphdr *udp, uint16_t *dns_data, 
 
     sprintf(message, "update the checksum");
     log_message("Check", LOGGER_OK, message);
+}
+
+int aes_encrypt(char *data, char *key, char *iv, int length, char *message)
+{
+    unsigned int ret;
+    int i;
+
+    struct scatterlist sgd; //散集序列，输出
+    struct scatterlist sgs; //散集序列，输入
+    char last_mem[17];
+    char dst_mem[17];
+    char *out = NULL;
+    char *result = NULL;
+    char *src = NULL;
+    struct crypto_blkcipher *tfm;
+    struct blkcipher_desc desc;
+    memset(last_mem, 0, 17);
+    memset(dst_mem, 0, 17);
+    /*分配块加密上下文
+    cbc(aes)表示模式，也可以ofb(aes)等，通常第一个参数为0，第三个参数表示加密模式,
+    */
+    tfm = crypto_alloc_blkcipher("cbc(aes)", 0, CRYPTO_ALG_ASYNC);
+    desc.tfm = tfm;
+    desc.flags = 0;
+    /*设置散集序列，将Linux内核中虚拟内存的数据传送到散集序列供dma应用，其中dst_mem，code,last_mem是我们自己设定的值，后面的16表示数据长度大小*/
+    sg_init_one(&sgd, dst_mem, 16);
+    sg_init_one(&sgs, data, 16);
+    crypto_blkcipher_setkey(tfm, key, 16); //设置key
+    crypto_blkcipher_set_iv(tfm, iv, 16);  //设置iv
+    /*将sgs(散集序列，物理内存)映射到Linux内核的虚拟内存中，目的是我们可以显示其数据*/
+    src = kmap(sg_page(&sgs)) + sgs.offset;
+    printk("the orgin is\n");
+    for (i = 0; i < sgs.length; i++)
+    {
+        printk("%c\n", src[i]);
+    }
+    //加密
+    ret = crypto_blkcipher_encrypt(&desc, &sgd, &sgs, sgs.length);
+    if (!ret)
+    {
+        printk("AES encrypt success*************************\n");
+        out = kmap(sg_page(&sgd)) + sgd.offset;
+        printk("the encrypt  is:\n");
+        for (i = 0; i < sgd.length; i++)
+        {
+            printk("%c\n", out[i]);
+        }
+    }
+    else
+    {
+        printk("the encrypt is wrong\n");
+    }
+
+    crypto_free_blkcipher(tfm);
+    return 1-ret;
+}
+
+int aes_decrypt(char *data, char *key, char *iv, int length, char *message)
+{
+    unsigned int ret;
+    int i;
+    struct scatterlist sgd; //散集序列，输出
+    struct scatterlist sgs; //散集序列，输入
+    char last_mem[17];
+    char dst_mem[17];
+    char *out = NULL;
+    char *result = NULL;
+    char *src = NULL;
+    struct crypto_blkcipher *tfm;
+    struct blkcipher_desc desc;
+    memset(last_mem, 0, 17);
+    memset(dst_mem, 0, 17);
+
+    /*分配块加密上下文
+    cbc(aes)表示模式，也可以ofb(aes)等，通常第一个参数为0，第三个参数表示加密模式,
+    */
+    tfm = crypto_alloc_blkcipher("cbc(aes)", 0, CRYPTO_ALG_ASYNC);
+    desc.tfm = tfm;
+    desc.flags = 0;
+
+    /*设置散集序列，将Linux内核中虚拟内存的数据传送到散集序列供dma应用，其中dst_mem，code,last_mem是我们自己设定的值，后面的16表示数据长度大小*/
+    sg_init_one(&sgd, dst_mem, 16);
+    sg_init_one(&sgs, data, 16);
+    crypto_blkcipher_setkey(tfm, key, 16); //设置key
+    crypto_blkcipher_set_iv(tfm, iv, 16);  //设置iv
+
+    /*将sgs(散集序列，物理内存)映射到Linux内核的虚拟内存中，目的是我们可以显示其数据*/
+    src = kmap(sg_page(&sgs)) + sgs.offset;
+    printk("the orgin is\n");
+    for (i = 0; i < sgs.length; i++)
+    {
+        printk("%c\n", src[i]);
+    }
+    //加密
+    ret = crypto_blkcipher_decrypt(&desc, &sgd, &sgs, sgs.length);
+    if (!ret)
+    {
+        printk("AES encrypt success*************************\n");
+        out = kmap(sg_page(&sgd)) + sgd.offset;
+        printk("the encrypt  is:\n");
+        for (i = 0; i < sgd.length; i++)
+        {
+            printk("%c\n", out[i]);
+        }
+    }
+    else
+    {
+        printk("the encrypt is wrong\n");
+    }
+
+    crypto_free_blkcipher(tfm);
+    return 1-ret;
+}
+
+
+int encrypt_query(void)
+{
+    return 0;
 }
 //================================Filter Implementation==END===============================
 
@@ -358,7 +479,6 @@ unsigned int dns_out_func(void *priv, struct sk_buff *skb, const struct nf_hook_
     struct iphdr *ip;
     struct udphdr *udp;
     uint16_t *dns_data = NULL;
-    uint16_t dns_flag = 0;
     int dns_length = 0;
 
     ip = ip_hdr(skb);
@@ -371,7 +491,6 @@ unsigned int dns_out_func(void *priv, struct sk_buff *skb, const struct nf_hook_
 
     dns_data = (uint16_t *)(udp + 1);
 
-
     if (dns_type(udp, message) == DNS_PACKET_QUERY)
     {
         /* code */
@@ -380,10 +499,9 @@ unsigned int dns_out_func(void *priv, struct sk_buff *skb, const struct nf_hook_
     {
         /* code */
     }
-    
+
     sprintf(message, "%x   %x", ntohs(dns_data[0]), ntohs(dns_data[1]));
     log_message("Identify", LOGGER_OK, message);
-
 
     sprintf(message, "a new modified dns outcome packet");
     log_message("Accept", LOGGER_OK, message);
