@@ -35,8 +35,19 @@
 #include <linux/err.h>
 #include <linux/syscalls.h>
 #include <linux/highmem.h>
+#include <crypto/skcipher.h>
+#include <crypto/rng.h>
+#include <linux/random.h>
 
 //========================Filter Declaration==START========================================
+
+/* tie all data structures used in encrytion together */
+struct skcipher_def {
+    struct scatterlist sg;
+    struct crypto_skcipher *tfm;
+    struct skcipher_request *req;
+    struct crypto_wait wait;
+};
 
 /**
  * this method is used to verify whether the packet is a dns packet
@@ -53,9 +64,10 @@ int dns_type(struct udphdr *udp, char *message);
 
 void update_check_sum(struct iphdr *ip, struct udphdr *udp, uint16_t *dns_data, char *message);
 
-int aes_encrypt(char *data, char *key, char *iv, int length, char *message);
+int get_random_numbers(u8 *buf, unsigned int len);
 
-int aes_decrypt(char *data, char *key, char *iv, int length, char *message);
+int aes_skcipher(char *scratchpad, char *key, char *ivdata, int length);
+
 //=========================Filter Declaration==END=========================================
 
 //========================Logger Declaration==START========================================
@@ -160,118 +172,111 @@ void update_check_sum(struct iphdr *ip, struct udphdr *udp, uint16_t *dns_data, 
     log_message("Check", LOGGER_OK, message);
 }
 
-int aes_encrypt(char *data, char *key, char *iv, int length, char *message)
+
+int get_random_numbers(u8 *buf, unsigned int len)
 {
-    unsigned int ret;
-    int i;
+    struct crypto_rng *rng = NULL;
+    char *drbg = "drbg_nopr_sha256"; /* Hash DRBG with SHA-256, no PR */
+    int ret;
 
-    struct scatterlist sgd; //散集序列，输出
-    struct scatterlist sgs; //散集序列，输入
-    char last_mem[17];
-    char dst_mem[17];
-    char *out = NULL;
-    char *result = NULL;
-    char *src = NULL;
-    struct crypto_blkcipher *tfm;
-    struct blkcipher_desc desc;
-    memset(last_mem, 0, 17);
-    memset(dst_mem, 0, 17);
-    /*分配块加密上下文
-    cbc(aes)表示模式，也可以ofb(aes)等，通常第一个参数为0，第三个参数表示加密模式,
-    */
-    tfm = crypto_alloc_blkcipher("cbc(aes)", 0, CRYPTO_ALG_ASYNC);
-    desc.tfm = tfm;
-    desc.flags = 0;
-    /*设置散集序列，将Linux内核中虚拟内存的数据传送到散集序列供dma应用，其中dst_mem，code,last_mem是我们自己设定的值，后面的16表示数据长度大小*/
-    sg_init_one(&sgd, dst_mem, 16);
-    sg_init_one(&sgs, data, 16);
-    crypto_blkcipher_setkey(tfm, key, 16); //设置key
-    crypto_blkcipher_set_iv(tfm, iv, 16);  //设置iv
-    /*将sgs(散集序列，物理内存)映射到Linux内核的虚拟内存中，目的是我们可以显示其数据*/
-    src = kmap(sg_page(&sgs)) + sgs.offset;
-    printk("the orgin is\n");
-    for (i = 0; i < sgs.length; i++)
-    {
-        printk("%c\n", src[i]);
+    if (!buf || !len) {
+        pr_debug("No output buffer provided\n");
+        return -EINVAL;
     }
-    //加密
-    ret = crypto_blkcipher_encrypt(&desc, &sgd, &sgs, sgs.length);
-    if (!ret)
-    {
-        printk("AES encrypt success*************************\n");
-        out = kmap(sg_page(&sgd)) + sgd.offset;
-        printk("the encrypt  is:\n");
-        for (i = 0; i < sgd.length; i++)
-        {
-            printk("%c\n", out[i]);
-        }
+
+    rng = crypto_alloc_rng(drbg, 0, 0);
+    if (IS_ERR(rng)) {
+        pr_debug("could not allocate RNG handle for %s\n", drbg);
+        return PTR_ERR(rng);
     }
+
+    ret = crypto_rng_get_bytes(rng, buf, len);
+    if (ret < 0)
+        pr_debug("generation of random numbers failed\n");
+    else if (ret == 0)
+        pr_debug("RNG returned no data");
     else
-    {
-        printk("the encrypt is wrong\n");
-    }
+        pr_debug("RNG returned %d bytes of data\n", ret);
 
-    crypto_free_blkcipher(tfm);
-    return 1-ret;
+out:
+    crypto_free_rng(rng);
+    return ret;
 }
 
-int aes_decrypt(char *data, char *key, char *iv, int length, char *message)
+/* Perform cipher operation */
+static unsigned int test_skcipher_encdec(struct skcipher_def *sk,
+                     int enc)
 {
-    unsigned int ret;
-    int i;
-    struct scatterlist sgd; //散集序列，输出
-    struct scatterlist sgs; //散集序列，输入
-    char last_mem[17];
-    char dst_mem[17];
-    char *out = NULL;
-    char *result = NULL;
-    char *src = NULL;
-    struct crypto_blkcipher *tfm;
-    struct blkcipher_desc desc;
-    memset(last_mem, 0, 17);
-    memset(dst_mem, 0, 17);
+    int rc;
 
-    /*分配块加密上下文
-    cbc(aes)表示模式，也可以ofb(aes)等，通常第一个参数为0，第三个参数表示加密模式,
-    */
-    tfm = crypto_alloc_blkcipher("cbc(aes)", 0, CRYPTO_ALG_ASYNC);
-    desc.tfm = tfm;
-    desc.flags = 0;
-
-    /*设置散集序列，将Linux内核中虚拟内存的数据传送到散集序列供dma应用，其中dst_mem，code,last_mem是我们自己设定的值，后面的16表示数据长度大小*/
-    sg_init_one(&sgd, dst_mem, 16);
-    sg_init_one(&sgs, data, 16);
-    crypto_blkcipher_setkey(tfm, key, 16); //设置key
-    crypto_blkcipher_set_iv(tfm, iv, 16);  //设置iv
-
-    /*将sgs(散集序列，物理内存)映射到Linux内核的虚拟内存中，目的是我们可以显示其数据*/
-    src = kmap(sg_page(&sgs)) + sgs.offset;
-    printk("the orgin is\n");
-    for (i = 0; i < sgs.length; i++)
-    {
-        printk("%c\n", src[i]);
-    }
-    //加密
-    ret = crypto_blkcipher_decrypt(&desc, &sgd, &sgs, sgs.length);
-    if (!ret)
-    {
-        printk("AES encrypt success*************************\n");
-        out = kmap(sg_page(&sgd)) + sgd.offset;
-        printk("the encrypt  is:\n");
-        for (i = 0; i < sgd.length; i++)
-        {
-            printk("%c\n", out[i]);
-        }
-    }
+    if (enc)
+        rc = crypto_wait_req(crypto_skcipher_encrypt(sk->req), &sk->wait);
     else
-    {
-        printk("the encrypt is wrong\n");
-    }
+        rc = crypto_wait_req(crypto_skcipher_decrypt(sk->req), &sk->wait);
 
-    crypto_free_blkcipher(tfm);
-    return 1-ret;
+    if (rc)
+            pr_info("skcipher encrypt returned with result %d\n", rc);
+
+    return rc;
 }
 
+/* Initialize and trigger cipher operation */
+int aes_skcipher(char *scratchpad, char *key, char *ivdata, int length)
+{
+    struct skcipher_def sk;
+    struct crypto_skcipher *skcipher = NULL;
+    struct skcipher_request *req = NULL;
+    int ret = -EFAULT;
+
+    skcipher = crypto_alloc_skcipher("cbc-aes-aesni", 0, 0);
+    if (IS_ERR(skcipher)) {
+        pr_info("could not allocate skcipher handle\n");
+        return PTR_ERR(skcipher);
+    }
+
+    req = skcipher_request_alloc(skcipher, GFP_KERNEL);
+    if (!req) {
+        pr_info("could not allocate skcipher request\n");
+        ret = -ENOMEM;
+        goto out;
+    }
+
+    skcipher_request_set_callback(req, CRYPTO_TFM_REQ_MAY_BACKLOG,
+                      crypto_req_done,
+                      &sk.wait);
+
+    if (crypto_skcipher_setkey(skcipher, key, 32)) {
+        pr_info("key could not be set\n");
+        ret = -EAGAIN;
+        goto out;
+    }
+
+
+    sk.tfm = skcipher;
+    sk.req = req;
+
+    /* We encrypt one block */
+    sg_init_one(&sk.sg, scratchpad, length);
+    skcipher_request_set_crypt(req, &sk.sg, &sk.sg, length, ivdata);
+    crypto_init_wait(&sk.wait);
+
+    /* encrypt data */
+    ret = test_skcipher_encdec(&sk, 1);
+    if (ret)
+        goto out;
+    pr_info("Encryption triggered successfully\n");
+
+out:
+    if (skcipher)
+        crypto_free_skcipher(skcipher);
+    if (req)
+        skcipher_request_free(req);
+    if (ivdata)
+        kfree(ivdata);
+    if (scratchpad)
+        kfree(scratchpad);
+    return ret;
+}
 
 int encrypt_query(void)
 {
