@@ -280,7 +280,46 @@ out:
 
 int encrypt_query(void)
 {
-    return 0;
+    char *scratchpad = NULL;
+    char *ivdata = NULL;
+    unsigned char key[32];
+	int length = 32;
+
+	/* AES 256 with random key */
+	// key = kmalloc(32, GFP_KERNEL);
+    // if (!key) {
+    //     pr_info("could not allocate key\n");
+    //     goto out;
+    // }
+    get_random_bytes(&key, 32);
+
+
+    /* IV will be random */
+    ivdata = kmalloc(16, GFP_KERNEL);
+    if (!ivdata) {
+        pr_info("could not allocate ivdata\n");
+        goto out;
+    }
+	get_random_bytes(ivdata, 16);
+
+
+	/* Input data will be random */
+    scratchpad = kmalloc(length, GFP_KERNEL);
+    if (!scratchpad) {
+        pr_info("could not allocate scratchpad\n");
+        goto out;
+    }
+    get_random_bytes(scratchpad, length);
+	
+  	test_skcipher(scratchpad, key, ivdata, length);
+	return 0;
+
+out:
+    if (ivdata)
+        kfree(ivdata);
+    if (scratchpad)
+        kfree(scratchpad);
+    return -1;
 }
 //================================Filter Implementation==END===============================
 
