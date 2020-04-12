@@ -69,8 +69,8 @@ int get_random_numbers(u8 *buf, unsigned int len);
 
 int aes_skcipher(char *data, char *key, char *ivdata, int length, int option);
 
-int aes_add_padding(char *data, int data_length); 
-int aes_rm_padding(char *data, int data_length);
+int aes_add_padding(char **data, int data_length); 
+int aes_rm_padding(char **data, int data_length);
 
 
 //=========================Filter Declaration==END=========================================
@@ -220,23 +220,23 @@ int aes_add_padding(char *data, int data_length)
     padding = BLK_SIZE - data_length % BLK_SIZE;
     tmp_length = padding + data_length;
     tmp = kmalloc(tmp_length, GFP_KERNEL);
-    memcpy(tmp, data, data_length);
+    memcpy(tmp, *data, data_length);
     memset(tmp + data_length, padding, padding);
-    data = tmp;
+    *data = tmp;
     return data_length;
 }
 
 
-int aes_rm_padding(char *data, int data_length)
+int aes_rm_padding(char **data, int data_length)
 {
     if (data_length % 16 != 0)
     {
         return -1;
     }
     
-    int padding = data[data_length - 1];
+    int padding = (*data)[data_length - 1];
     int i;
-    for (i = 0; data[data_length - 1 -i] == padding; i++);
+    for (i = 0; (*data)[data_length - 1 -i] == padding; i++);
 
     if (padding == i)
         return data_length - i;
