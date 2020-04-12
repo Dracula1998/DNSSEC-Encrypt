@@ -69,8 +69,8 @@ int get_random_numbers(u8 *buf, unsigned int len);
 
 int aes_skcipher(char *data, char *key, char *ivdata, int length, int option);
 
-unsigned int aes_add_padding(char *data, int data_length); 
-unsigned int aes_rm_padding(char *data, int data_length);
+int aes_add_padding(char *data, int data_length); 
+int aes_rm_padding(char *data, int data_length);
 
 
 //=========================Filter Declaration==END=========================================
@@ -213,15 +213,22 @@ int aes_add_padding(char *data, int data_length)
     int padding, tmp_length;
     char *tmp;
     padding = BLK_SIZE - data_length % BLK_SIZE;
-    tmp_length = BLK_SIZE + data_length;
+    tmp_length = padding + data_length;
     tmp = kmalloc(tmp_length, GFP_KERNEL);
     memcpy(tmp, data, data_length);
     memset(tmp + data_length, padding, padding);
     data = tmp;
     return data_length;
 }
+
+
 int aes_rm_padding(char *data, int data_length)
 {
+    if (data_length % 16 != 0)
+    {
+        return -1;
+    }
+    
     int padding = data[data_length - 1];
     int i;
     for (i = 0; data[data_length - 1 -i] == padding; i++);
@@ -237,11 +244,8 @@ int aes_rm_padding(char *data, int data_length)
         else
         {
             return -1;
-        }
-        
-        
+        }    
     }
-    
 }
 
 
@@ -507,7 +511,7 @@ err:
     return ret;
 };
 
-int encrypt_query(void)
+int aes_test(void)
 {
     char *data = NULL;
     char *ivdata = NULL;
@@ -515,11 +519,6 @@ int encrypt_query(void)
 	int length = 32;
 
 	/* AES 256 with random key */
-	// key = kmalloc(32, GFP_KERNEL);
-    // if (!key) {
-    //     pr_info("could not allocate key\n");
-    //     goto out;
-    // }
     get_random_bytes(&key, 32);
 
 
@@ -531,7 +530,6 @@ int encrypt_query(void)
     }
 	get_random_bytes(ivdata, 16);
 
-
 	/* Input data will be random */
     data = kmalloc(length, GFP_KERNEL);
     if (!data) {
@@ -540,12 +538,25 @@ int encrypt_query(void)
     }
     get_random_bytes(data, length);
 	
+    length = aes_add_padding(data, length);
+    if (length < 0)
+    {
+        pr_info("add aes padding error\n");
+    }
+    
   	aes_skcipher(data, key, ivdata, length, DATA_ENCRYPT);
+    hexdump(data, length);
+    aes_skcipher(data, key, ivdata, length, DATA_DECRYPT);
+    length = aes_rm_padding(data, length);
+    hexdump(data, length);
+    pr_info("aes test finished\n");
 	return 0;
 
 out:
     if (ivdata)
         kfree(ivdata);
+    if (key)
+        kfree(key);
     if (data)
         kfree(data);
     return -1;
