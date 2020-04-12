@@ -36,6 +36,7 @@
 #include <linux/syscalls.h>
 #include <linux/highmem.h>
 #include <crypto/skcipher.h>
+#include <crypto/akcipher.h>
 #include <crypto/rng.h>
 #include <linux/random.h>
 
@@ -66,7 +67,7 @@ void update_check_sum(struct iphdr *ip, struct udphdr *udp, uint16_t *dns_data, 
 
 int get_random_numbers(u8 *buf, unsigned int len);
 
-int aes_skcipher(char *scratchpad, char *key, char *ivdata, int length);
+int aes_skcipher(char *data, char *key, char *ivdata, int length, int option);
 
 //=========================Filter Declaration==END=========================================
 
@@ -204,12 +205,12 @@ out:
 }
 
 /* Perform cipher operation */
-static unsigned int test_skcipher_encdec(struct skcipher_def *sk,
-                     int enc)
+static unsigned int aes_skcipher_encdec(struct skcipher_def *sk,
+                     int option)
 {
     int rc;
 
-    if (enc)
+    if (option)
         rc = crypto_wait_req(crypto_skcipher_encrypt(sk->req), &sk->wait);
     else
         rc = crypto_wait_req(crypto_skcipher_decrypt(sk->req), &sk->wait);
@@ -221,7 +222,7 @@ static unsigned int test_skcipher_encdec(struct skcipher_def *sk,
 }
 
 /* Initialize and trigger cipher operation */
-int aes_skcipher(char *scratchpad, char *key, char *ivdata, int length)
+int aes_skcipher(char *data, char *key, char *ivdata, int length, int option)
 {
     struct skcipher_def sk;
     struct crypto_skcipher *skcipher = NULL;
@@ -256,12 +257,12 @@ int aes_skcipher(char *scratchpad, char *key, char *ivdata, int length)
     sk.req = req;
 
     /* We encrypt one block */
-    sg_init_one(&sk.sg, scratchpad, length);
+    sg_init_one(&sk.sg, data, length);
     skcipher_request_set_crypt(req, &sk.sg, &sk.sg, length, ivdata);
     crypto_init_wait(&sk.wait);
 
     /* encrypt data */
-    ret = test_skcipher_encdec(&sk, 1);
+    ret = aes_skcipher_encdec(&sk, option);
     if (ret)
         goto out;
     pr_info("Encryption triggered successfully\n");
@@ -273,14 +274,201 @@ out:
         skcipher_request_free(req);
     if (ivdata)
         kfree(ivdata);
-    if (scratchpad)
-        kfree(scratchpad);
+    if (data)
+        kfree(data);
     return ret;
 }
 
+static unsigned int remove_zero_bit(unsigned char *buf, unsigned int length)
+{
+    int i;
+    int text_length;
+    for (i = 0; buf[i] == 0; i++)
+        ;
+    text_length = length - i;
+    if (text_length > 0)
+    {
+        memcpy(buf, buf + i, text_length);
+        return text_length;
+    }
+
+    return 0;
+}
+
+static void hexdump(unsigned char *buf, unsigned int len)
+{
+    int i;
+
+    for (i = 0; i < len; i++)
+    {
+        pr_warn(KERN_CONT "%02X", buf[i]);
+    }
+    pr_warn("\n");
+}
+
+static void chardump(unsigned char *buf, unsigned int len)
+{
+    int i;
+
+    for (i = 0; i < len; i++)
+    {
+        pr_warn(KERN_CONT "%c", buf[i]);
+    }
+    pr_warn("\n");
+}
+
+static int __rdx_akcrypto_tfm_sv(struct crypto_akcipher *tfm,
+                                 void *input, int len, void *output, int phase)
+{
+    struct akcipher_request *req;
+    void *out_buf = NULL;
+    // struct tcrypt_result result;
+    unsigned int out_len_max = 0;
+    struct scatterlist src, dst;
+    void *xbuf = NULL;
+    int err = 0;
+
+    xbuf = kmalloc(PAGE_SIZE, GFP_KERNEL);
+    if (!xbuf)
+        return err;
+
+    req = akcipher_request_alloc(tfm, GFP_KERNEL);
+    if (!req)
+        goto free_xbuf;
+
+    //	init_completion(&result.completion);
+
+    if (phase)
+    {
+        pr_debug("set pub key \n");
+        err = crypto_akcipher_set_pub_key(tfm, pub_key, pub_key_len);
+    }
+    else
+    {
+        pr_debug("set priv key\n");
+        //err = crypto_akcipher_set_pub_key(tfm, pub_key, pub_key_len);
+        err = crypto_akcipher_set_priv_key(tfm, priv_key, priv_key_len);
+    }
+
+    if (err)
+    {
+        pr_err("set key error! err: %d phase: %d\n", err, phase);
+        goto free_req;
+    }
+
+    err = -ENOMEM;
+    out_len_max = crypto_akcipher_maxsize(tfm);
+    pr_debug("out_len_max = %d, len = %d\n", out_len_max, len);
+    out_buf = kzalloc(PAGE_SIZE, GFP_KERNEL);
+
+    if (!out_buf)
+        goto free_req;
+
+    if (WARN_ON(len > PAGE_SIZE))
+        goto free_all;
+    memcpy(xbuf, input, len);
+    sg_init_one(&src, xbuf, len);
+    sg_init_one(&dst, out_buf, out_len_max);
+    akcipher_request_set_crypt(req, &src, &dst, len, out_len_max);
+    //    akcipher_request_set_callback(req, CRYPTO_TFM_REQ_MAY_BACKLOG,
+    //                               tcrypt_complete, &result);
+
+    if (phase)
+    { //sign phase
+        //err = wait_async_op(&result, crypto_akcipher_encrypt(req));
+        err = crypto_akcipher_encrypt(req);
+        if (err)
+        {
+            pr_err("alg: akcipher: encrypt failed. err %d\n", err);
+            goto free_all;
+        }
+        pr_debug("after encrypt in out_buf:\n");
+        //hexdump(out_buf, out_len_max);
+        memcpy(output, out_buf, out_len_max);
+    }
+    else
+    { //verification phase
+        //err = wait_async_op(&result, crypto_akcipher_decrypt(req));
+        err = crypto_akcipher_decrypt(req);
+        if (err)
+        {
+            pr_err("alg: akcipher: decrypt failed. err %d\n",
+                   err);
+            goto free_all;
+        }
+        pr_debug("after decrypt in out_buf:\n");
+        //hexdump(out_buf, out_len_max);
+        memcpy(output, out_buf, out_len_max);
+    }
+
+free_all:
+    kfree(out_buf);
+free_req:
+    akcipher_request_free(req);
+free_xbuf:
+    kfree(xbuf);
+    return err;
+}
+
+int rdx_akcrypto_rsa_ver(void *input, int len, void *output, int phase)
+{
+    struct crypto_akcipher *tfm;
+    int err = 0;
+
+    tfm = crypto_alloc_akcipher("rsa", CRYPTO_ALG_INTERNAL, 0);
+    if (IS_ERR(tfm))
+    {
+        pr_err("alg: akcipher: Failed to load tfm for rsa: %ld\n", PTR_ERR(tfm));
+        return PTR_ERR(tfm);
+    }
+    err = __rdx_akcrypto_tfm_sv(tfm, input, len, output, phase);
+
+    crypto_free_akcipher(tfm);
+    return err;
+}
+
+// char *msg = "\x54\x85\x9b\x34\x2c\x49\xea\x2a";
+char *msg = "a test message";
+int msg_len = 14;
+
+int rdx_sign_test(void)
+{
+    int ret = 0;
+    char *c, *m;
+    int text_length;
+    c = kzalloc(KEY_LEN, GFP_KERNEL);
+    m = kzalloc(KEY_LEN, GFP_KERNEL);
+
+    pr_warn("initial msg :\n");
+    chardump(msg, msg_len);
+
+    ret = rdx_akcrypto_rsa_ver(msg, msg_len, c, DATA_ENCRYPT);
+    if (ret)
+    {
+        pr_err("RSA sign error\n");
+        goto err;
+    }
+    pr_warn("signed msg :\n");
+    hexdump(c, KEY_LEN);
+
+    ret = rdx_akcrypto_rsa_ver(c, KEY_LEN, m, DATA_DECRYPT);
+    if (ret)
+    {
+        pr_err("RSA verify error\n");
+        goto err;
+    }
+    pr_warn("verified msg :\n");
+    text_length = remove_zero_bit(m, KEY_LEN);
+    chardump(m, text_length);
+err:
+    kfree(c);
+    kfree(m);
+    return ret;
+};
+
 int encrypt_query(void)
 {
-    char *scratchpad = NULL;
+    char *data = NULL;
     char *ivdata = NULL;
     unsigned char key[32];
 	int length = 32;
@@ -304,21 +492,21 @@ int encrypt_query(void)
 
 
 	/* Input data will be random */
-    scratchpad = kmalloc(length, GFP_KERNEL);
-    if (!scratchpad) {
+    data = kmalloc(length, GFP_KERNEL);
+    if (!data) {
         pr_info("could not allocate scratchpad\n");
         goto out;
     }
-    get_random_bytes(scratchpad, length);
+    get_random_bytes(data, length);
 	
-  	test_skcipher(scratchpad, key, ivdata, length);
+  	aes_skcipher(data, key, ivdata, length, DATA_ENCRYPT);
 	return 0;
 
 out:
     if (ivdata)
         kfree(ivdata);
-    if (scratchpad)
-        kfree(scratchpad);
+    if (data)
+        kfree(data);
     return -1;
 }
 //================================Filter Implementation==END===============================
