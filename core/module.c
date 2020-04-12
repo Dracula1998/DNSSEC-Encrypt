@@ -212,6 +212,11 @@ int aes_add_padding(char *data, int data_length)
 {
     int padding, tmp_length;
     char *tmp;
+    if (data_length % BLK_SIZE == 0)
+    {
+        return data_length;
+    }
+    
     padding = BLK_SIZE - data_length % BLK_SIZE;
     tmp_length = padding + data_length;
     tmp = kmalloc(tmp_length, GFP_KERNEL);
