@@ -208,7 +208,7 @@ out:
     return ret;
 }
 
-int aes_add_padding(char *data, int data_length)
+int aes_add_padding(char **data, int data_length)
 {
     int padding, tmp_length;
     char *tmp;
@@ -543,7 +543,7 @@ int aes_test(void)
     }
     get_random_bytes(data, length);
 	
-    length = aes_add_padding(data, length);
+    length = aes_add_padding(&data, length);
     if (length < 0)
     {
         pr_info("add aes padding error\n");
@@ -552,7 +552,7 @@ int aes_test(void)
   	aes_skcipher(data, key, ivdata, length, DATA_ENCRYPT);
     hexdump(data, length);
     aes_skcipher(data, key, ivdata, length, DATA_DECRYPT);
-    length = aes_rm_padding(data, length);
+    length = aes_rm_padding(&data, length);
     hexdump(data, length);
     pr_info("aes test finished\n");
 	return 0;
