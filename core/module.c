@@ -69,6 +69,10 @@ int get_random_numbers(u8 *buf, unsigned int len);
 
 int aes_skcipher(char *data, char *key, char *ivdata, int length, int option);
 
+unsigned int aes_add_padding(char *data, int data_length); 
+unsigned int aes_rm_padding(char *data, int data_length);
+
+
 //=========================Filter Declaration==END=========================================
 
 //========================Logger Declaration==START========================================
@@ -204,9 +208,46 @@ out:
     return ret;
 }
 
+int aes_add_padding(char *data, int data_length)
+{
+    int padding, tmp_length;
+    char *tmp;
+    padding = BLK_SIZE - data_length % BLK_SIZE;
+    tmp_length = BLK_SIZE + data_length;
+    tmp = kmalloc(tmp_length, GFP_KERNEL);
+    memcpy(tmp, data, data_length);
+    memset(tmp + data_length, padding, padding);
+    data = tmp;
+    return data_length;
+}
+int aes_rm_padding(char *data, int data_length)
+{
+    int padding = data[data_length - 1];
+    int i;
+    for (i = 0; data[data_length - 1 -i] == padding; i++);
+
+    if (padding == i)
+        return data_length - i;
+    else
+    {
+        if (i == 1)
+        {
+            return data_length;
+        }
+        else
+        {
+            return -1;
+        }
+        
+        
+    }
+    
+}
+
+
+
 /* Perform cipher operation */
-static unsigned int aes_skcipher_encdec(struct skcipher_def *sk,
-                     int option)
+static unsigned int aes_skcipher_encdec(struct skcipher_def *sk, int option)
 {
     int rc;
 
