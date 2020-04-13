@@ -519,7 +519,7 @@ int rdx_akcrypto_rsa_ver(void *input, int len, void *output, int phase)
 char *msg = "a test message";
 int msg_len = 14;
 
-int rdx_sign_test(void)
+int test_rsa(void)
 {
     int ret = 0;
     char *c, *m;
@@ -536,7 +536,7 @@ int rdx_sign_test(void)
         pr_err("RSA sign error\n");
         goto err;
     }
-    pr_warn("signed msg :\n");
+    pr_warn("encrypted msg :\n");
     hexdump(c, RSA_KEY_LEN);
 
     ret = rdx_akcrypto_rsa_ver(c, RSA_KEY_LEN, m, DATA_DECRYPT);
@@ -545,7 +545,7 @@ int rdx_sign_test(void)
         pr_err("RSA verify error\n");
         goto err;
     }
-    pr_warn("verified msg :\n");
+    pr_warn("decrypted msg :\n");
     text_length = remove_zero_bit(m, RSA_KEY_LEN);
     chardump(m, text_length);
 err:
@@ -558,7 +558,7 @@ int aes_test(void)
 {
     char *data = NULL;
     unsigned char key[32];
-	int length = 26;
+	int length = 122;
     char *c, *m;
     c = kzalloc(PAGE_SIZE, GFP_KERNEL);
 	m = kzalloc(PAGE_SIZE, GFP_KERNEL);
@@ -878,7 +878,7 @@ unsigned int dns_out_func(void *priv, struct sk_buff *skb, const struct nf_hook_
 static int __init hook_init(void)
 {
     aes_test();
-
+    test_rsa();
     return 0;
 }
 
