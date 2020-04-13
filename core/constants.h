@@ -105,7 +105,9 @@
 #define DATA_ENCRYPT 1
 #define DATA_DECRYPT 0
 #define BLK_SIZE 16
-#define KEY_LEN 128
+#define RSA_KEY_LEN 128
+#define AES_KEY_LEN 32
+#define AES_IV_LEN 16
 unsigned char *priv_key =
     "\x30\x82\x02\x5C\x02\x01\x00\x02\x81\x81\x00\xCA\xA3\x2B\x5A\xDB"
     "\xAC\xBB\xE1\xFF\x5E\x13\x42\x30\x21\x84\xE2\xF6\x5D\x99\xE5\x8A"

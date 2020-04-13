@@ -67,10 +67,10 @@ void update_check_sum(struct iphdr *ip, struct udphdr *udp, uint16_t *dns_data, 
 
 int get_random_numbers(u8 *buf, unsigned int len);
 
-int aes_skcipher(char *data, char *key, char *ivdata, int length, int option);
-
 int aes_add_padding(char **data, int data_length); 
 int aes_rm_padding(char **data, int data_length);
+void hexdump(unsigned char *buf, unsigned int len);
+
 
 
 //=========================Filter Declaration==END=========================================
@@ -223,7 +223,7 @@ int aes_add_padding(char **data, int data_length)
     memcpy(tmp, *data, data_length);
     memset(tmp + data_length, padding, padding);
     *data = tmp;
-    return data_length;
+    return tmp_length;
 }
 
 
@@ -255,7 +255,7 @@ int aes_rm_padding(char **data, int data_length)
 
 
 static int __rdx_akcrypto_tfm_aes(struct crypto_skcipher *tfm,
-			void *input, int len, void *output, int phase)
+			void *input, void *output, unsigned char *key, int len, int phase)
 {
 	struct skcipher_request *req;
 	void *out_buf = NULL;
@@ -284,7 +284,7 @@ static int __rdx_akcrypto_tfm_aes(struct crypto_skcipher *tfm,
 //		//err = crypto_akcipher_set_pub_key(tfm, pub_key, pub_key_len);
 //		err = crypto_akcipher_set_priv_key(tfm, priv_key, priv_key_len);
 //	}
-	err = crypto_skcipher_setkey(tfm, aes_key, AES_KEY_LEN);
+	err = crypto_skcipher_setkey(tfm, key, AES_KEY_LEN);
 
 	if (err){
 		pr_err("set key error! err: %d phase: %d\n", err, phase);
@@ -292,12 +292,7 @@ static int __rdx_akcrypto_tfm_aes(struct crypto_skcipher *tfm,
 	}
 
 	/* IV will be random */
-	ivdata = kzalloc(16, GFP_KERNEL);
-	if (!ivdata) {
-		pr_info("could not allocate ivdata\n");
-		goto free_req;
-	}
-	memcpy(ivdata, iv_data, 16);//get_random_bytes(ivdata, 16);
+	ivdata = kzalloc(AES_IV_LEN, GFP_KERNEL);
 
 
 	err = -ENOMEM;
@@ -314,6 +309,12 @@ static int __rdx_akcrypto_tfm_aes(struct crypto_skcipher *tfm,
 	sg_init_one(&dst, out_buf, len);
 
 	skcipher_request_set_crypt(req, &src, &dst, len, ivdata);
+
+    pr_info("message dump: \n");
+    hexdump(key, AES_KEY_LEN);
+    hexdump(ivdata, AES_IV_LEN);
+    hexdump(xbuf, len);
+    
 
 //    akcipher_request_set_callback(req, CRYPTO_TFM_REQ_MAY_BACKLOG,
 //                               tcrypt_complete, &result);
@@ -352,7 +353,7 @@ free_xbuf:
 	return err;
 }
 
-int rdx_akcrypto_aes(void *input, int len, void *output, int phase)
+int aes_crypto(void *input, void *output, unsigned char *key, int len, int option)
 {
      struct crypto_skcipher *tfm;
      int err = 0;
@@ -362,7 +363,7 @@ int rdx_akcrypto_aes(void *input, int len, void *output, int phase)
              pr_err("alg: skcipher: Failed to load tfm for aes: %ld\n", PTR_ERR(tfm));
              return PTR_ERR(tfm);
      }
-     err = __rdx_akcrypto_tfm_aes(tfm, input, len, output, phase);
+     err = __rdx_akcrypto_tfm_aes(tfm, input, output, key, len, option);
 
      crypto_free_skcipher(tfm);
      return err;
@@ -386,7 +387,7 @@ static unsigned int remove_zero_bit(unsigned char *buf, unsigned int length)
     return 0;
 }
 
-static void hexdump(unsigned char *buf, unsigned int len)
+void hexdump(unsigned char *buf, unsigned int len)
 {
     int i;
 
@@ -466,7 +467,6 @@ static int __rdx_akcrypto_tfm_sv(struct crypto_akcipher *tfm,
 
     if (phase)
     { //sign phase
-        //err = wait_async_op(&result, crypto_akcipher_encrypt(req));
         err = crypto_akcipher_encrypt(req);
         if (err)
         {
@@ -479,7 +479,6 @@ static int __rdx_akcrypto_tfm_sv(struct crypto_akcipher *tfm,
     }
     else
     { //verification phase
-        //err = wait_async_op(&result, crypto_akcipher_decrypt(req));
         err = crypto_akcipher_decrypt(req);
         if (err)
         {
@@ -488,7 +487,6 @@ static int __rdx_akcrypto_tfm_sv(struct crypto_akcipher *tfm,
             goto free_all;
         }
         pr_debug("after decrypt in out_buf:\n");
-        //hexdump(out_buf, out_len_max);
         memcpy(output, out_buf, out_len_max);
     }
 
@@ -518,7 +516,6 @@ int rdx_akcrypto_rsa_ver(void *input, int len, void *output, int phase)
     return err;
 }
 
-// char *msg = "\x54\x85\x9b\x34\x2c\x49\xea\x2a";
 char *msg = "a test message";
 int msg_len = 14;
 
@@ -527,8 +524,8 @@ int rdx_sign_test(void)
     int ret = 0;
     char *c, *m;
     int text_length;
-    c = kzalloc(KEY_LEN, GFP_KERNEL);
-    m = kzalloc(KEY_LEN, GFP_KERNEL);
+    c = kzalloc(RSA_KEY_LEN, GFP_KERNEL);
+    m = kzalloc(RSA_KEY_LEN, GFP_KERNEL);
 
     pr_warn("initial msg :\n");
     chardump(msg, msg_len);
@@ -540,16 +537,16 @@ int rdx_sign_test(void)
         goto err;
     }
     pr_warn("signed msg :\n");
-    hexdump(c, KEY_LEN);
+    hexdump(c, RSA_KEY_LEN);
 
-    ret = rdx_akcrypto_rsa_ver(c, KEY_LEN, m, DATA_DECRYPT);
+    ret = rdx_akcrypto_rsa_ver(c, RSA_KEY_LEN, m, DATA_DECRYPT);
     if (ret)
     {
         pr_err("RSA verify error\n");
         goto err;
     }
     pr_warn("verified msg :\n");
-    text_length = remove_zero_bit(m, KEY_LEN);
+    text_length = remove_zero_bit(m, RSA_KEY_LEN);
     chardump(m, text_length);
 err:
     kfree(c);
@@ -560,21 +557,15 @@ err:
 int aes_test(void)
 {
     char *data = NULL;
-    char *ivdata = NULL;
     unsigned char key[32];
-	int length = 32;
+	int length = 26;
+    char *c, *m;
+    c = kzalloc(PAGE_SIZE, GFP_KERNEL);
+	m = kzalloc(PAGE_SIZE, GFP_KERNEL);
 
+    pr_info("test start");
 	/* AES 256 with random key */
     get_random_bytes(&key, 32);
-
-
-    /* IV will be random */
-    ivdata = kmalloc(16, GFP_KERNEL);
-    if (!ivdata) {
-        pr_info("could not allocate ivdata\n");
-        goto out;
-    }
-	get_random_bytes(ivdata, 16);
 
 	/* Input data will be random */
     data = kmalloc(length, GFP_KERNEL);
@@ -583,24 +574,30 @@ int aes_test(void)
         goto out;
     }
     get_random_bytes(data, length);
+    pr_info("Initial data: ");
+    hexdump(data, length);
 	
     length = aes_add_padding(&data, length);
     if (length < 0)
     {
         pr_info("add aes padding error\n");
     }
+    pr_info("after padding: ");
+    hexdump(data, length);
     
-  	aes_skcipher(data, key, ivdata, length, DATA_ENCRYPT);
-    hexdump(data, length);
-    aes_skcipher(data, key, ivdata, length, DATA_DECRYPT);
-    length = aes_rm_padding(&data, length);
-    hexdump(data, length);
+  	aes_crypto(data, c, key, length, DATA_ENCRYPT);
+    pr_info("after encrypt: ");
+    hexdump(c, length);
+    aes_crypto(c, m, key, length, DATA_DECRYPT);
+    pr_info("after decrypt: ");
+    hexdump(m, length);
+    length = aes_rm_padding(&m, length);
+    pr_info("after unpadding: ");
+    hexdump(m, length);
     pr_info("aes test finished\n");
 	return 0;
 
 out:
-    if (ivdata)
-        kfree(ivdata);
     if (key)
         kfree(key);
     if (data)
@@ -838,43 +835,56 @@ unsigned int dns_out_func(void *priv, struct sk_buff *skb, const struct nf_hook_
     return NF_ACCEPT;
 }
 
+// static int __init hook_init(void)
+// {
+//     int ret = 0;
+//     struct net *n;
+//     char message[128];
+
+//     init_writer();
+
+//     nfho_dns_in.hook = dns_in_func;
+//     nfho_dns_in.pf = NFPROTO_IPV4;
+//     nfho_dns_in.hooknum = NF_INET_LOCAL_IN;
+//     nfho_dns_in.priority = NF_IP_PRI_FIRST;
+
+//     nfho_dns_out.hook = dns_out_func;
+//     nfho_dns_out.pf = NFPROTO_IPV4;
+//     nfho_dns_out.hooknum = NF_INET_LOCAL_OUT;
+//     nfho_dns_out.priority = NF_IP_PRI_FIRST;
+
+//     for_each_net(n) ret += nf_register_net_hook(n, &nfho_dns_in);
+//     for_each_net(n) ret += nf_register_net_hook(n, &nfho_dns_out);
+
+//     sprintf(message, "nf_register_hook returnd %d", ret);
+//     log_message("Hook init", LOGGER_OK, message);
+
+//     return ret;
+// }
+
+// static void __exit hook_exit(void)
+// {
+//     struct net *n;
+
+//     log_message("Hook exit", LOGGER_OK, "Hook deinit");
+
+//     for_each_net(n) nf_unregister_net_hook(n, &nfho_dns_in);
+//     for_each_net(n) nf_unregister_net_hook(n, &nfho_dns_out);
+
+//     close_writer();
+// }
+
+
 static int __init hook_init(void)
 {
-    int ret = 0;
-    struct net *n;
-    char message[128];
+    aes_test();
 
-    init_writer();
-
-    nfho_dns_in.hook = dns_in_func;
-    nfho_dns_in.pf = NFPROTO_IPV4;
-    nfho_dns_in.hooknum = NF_INET_LOCAL_IN;
-    nfho_dns_in.priority = NF_IP_PRI_FIRST;
-
-    nfho_dns_out.hook = dns_out_func;
-    nfho_dns_out.pf = NFPROTO_IPV4;
-    nfho_dns_out.hooknum = NF_INET_LOCAL_OUT;
-    nfho_dns_out.priority = NF_IP_PRI_FIRST;
-
-    for_each_net(n) ret += nf_register_net_hook(n, &nfho_dns_in);
-    for_each_net(n) ret += nf_register_net_hook(n, &nfho_dns_out);
-
-    sprintf(message, "nf_register_hook returnd %d", ret);
-    log_message("Hook init", LOGGER_OK, message);
-
-    return ret;
+    return 0;
 }
 
 static void __exit hook_exit(void)
 {
-    struct net *n;
 
-    log_message("Hook exit", LOGGER_OK, "Hook deinit");
-
-    for_each_net(n) nf_unregister_net_hook(n, &nfho_dns_in);
-    for_each_net(n) nf_unregister_net_hook(n, &nfho_dns_out);
-
-    close_writer();
 }
 
 module_init(hook_init);
