@@ -254,80 +254,121 @@ int aes_rm_padding(char **data, int data_length)
 }
 
 
-
-/* Perform cipher operation */
-static unsigned int aes_skcipher_encdec(struct skcipher_def *sk, int option)
+static int __rdx_akcrypto_tfm_aes(struct crypto_skcipher *tfm,
+			void *input, int len, void *output, int phase)
 {
-    int rc;
+	struct skcipher_request *req;
+	void *out_buf = NULL;
+//	struct tcrypt_result result;
+	unsigned int out_len_max = 0;
+	struct scatterlist src, dst;
+	void *xbuf = NULL;
+	int err = 0;
+	char *ivdata;
 
-    if (option)
-        rc = crypto_wait_req(crypto_skcipher_encrypt(sk->req), &sk->wait);
-    else
-        rc = crypto_wait_req(crypto_skcipher_decrypt(sk->req), &sk->wait);
+	xbuf = kzalloc(PAGE_SIZE, GFP_KERNEL);
+	if (!xbuf)
+		return err;
 
-    if (rc)
-            pr_info("skcipher encrypt returned with result %d\n", rc);
+	req = skcipher_request_alloc(tfm, GFP_KERNEL);
+	if (!req)
+		goto free_xbuf;
 
-    return rc;
+//	init_completion(&result.completion);
+
+//	if (!phase) {
+//		pr_debug("set pub key \n");
+//		err = crypto_akcipher_set_pub_key(tfm, pub_key, pub_key_len);
+//	} else {
+//		pr_debug("set priv key\n");
+//		//err = crypto_akcipher_set_pub_key(tfm, pub_key, pub_key_len);
+//		err = crypto_akcipher_set_priv_key(tfm, priv_key, priv_key_len);
+//	}
+	err = crypto_skcipher_setkey(tfm, aes_key, AES_KEY_LEN);
+
+	if (err){
+		pr_err("set key error! err: %d phase: %d\n", err, phase);
+		goto free_req;
+	}
+
+	/* IV will be random */
+	ivdata = kzalloc(16, GFP_KERNEL);
+	if (!ivdata) {
+		pr_info("could not allocate ivdata\n");
+		goto free_req;
+	}
+	memcpy(ivdata, iv_data, 16);//get_random_bytes(ivdata, 16);
+
+
+	err = -ENOMEM;
+	pr_debug("out_len_max = %d, len = %d\n", out_len_max, len);
+	out_buf = kzalloc(PAGE_SIZE, GFP_KERNEL);
+
+	if (!out_buf)
+		goto free_req;
+
+	if (WARN_ON(len > PAGE_SIZE))
+		goto free_all;
+	memcpy(xbuf, input, len);
+	sg_init_one(&src, xbuf, len);
+	sg_init_one(&dst, out_buf, len);
+
+	skcipher_request_set_crypt(req, &src, &dst, len, ivdata);
+
+//    akcipher_request_set_callback(req, CRYPTO_TFM_REQ_MAY_BACKLOG,
+//                               tcrypt_complete, &result);
+
+	if (phase) { //sign phase
+		//err = wait_async_op(&result, crypto_akcipher_encrypt(req));
+		pr_warn ("start enc\n");
+		err =  crypto_skcipher_encrypt(req);
+		if (err) {
+			pr_err("skcipher: encrypt failed. err %d\n", err);
+			goto free_all;
+		}
+		pr_debug("after encrypt in out_buf:\n");
+		//hexdump(out_buf, out_len_max);
+		memcpy(output, out_buf, len);
+	} else { //verification phase
+		pr_warn("dec start\n");
+		//err = wait_async_op(&result, crypto_akcipher_decrypt(req));
+		err =  crypto_skcipher_decrypt(req);
+		if (err) {
+			pr_err("skcipher: decrypt failed. err %d\n",
+					err);
+			goto free_all;
+		}
+		pr_debug("after decrypt in out_buf:\n");
+		//hexdump(out_buf, out_len_max);
+		memcpy(output, out_buf, len);
+	}
+
+free_all:
+	kfree(out_buf);
+free_req:
+	skcipher_request_free(req);
+free_xbuf:
+	kfree(xbuf);
+	return err;
 }
 
-/* Initialize and trigger cipher operation */
-int aes_skcipher(char *data, char *key, char *ivdata, int length, int option)
+int rdx_akcrypto_aes(void *input, int len, void *output, int phase)
 {
-    struct skcipher_def sk;
-    struct crypto_skcipher *skcipher = NULL;
-    struct skcipher_request *req = NULL;
-    int ret = -EFAULT;
+     struct crypto_skcipher *tfm;
+     int err = 0;
 
-    skcipher = crypto_alloc_skcipher("cbc-aes-aesni", 0, 0);
-    if (IS_ERR(skcipher)) {
-        pr_info("could not allocate skcipher handle\n");
-        return PTR_ERR(skcipher);
-    }
+     tfm = crypto_alloc_skcipher("cbc-aes-aesni", 0, 0);
+     if (IS_ERR(tfm)) {
+             pr_err("alg: skcipher: Failed to load tfm for aes: %ld\n", PTR_ERR(tfm));
+             return PTR_ERR(tfm);
+     }
+     err = __rdx_akcrypto_tfm_aes(tfm, input, len, output, phase);
 
-    req = skcipher_request_alloc(skcipher, GFP_KERNEL);
-    if (!req) {
-        pr_info("could not allocate skcipher request\n");
-        ret = -ENOMEM;
-        goto out;
-    }
-
-    skcipher_request_set_callback(req, CRYPTO_TFM_REQ_MAY_BACKLOG,
-                      crypto_req_done,
-                      &sk.wait);
-
-    if (crypto_skcipher_setkey(skcipher, key, 32)) {
-        pr_info("key could not be set\n");
-        ret = -EAGAIN;
-        goto out;
-    }
-
-
-    sk.tfm = skcipher;
-    sk.req = req;
-
-    /* We encrypt one block */
-    sg_init_one(&sk.sg, data, length);
-    skcipher_request_set_crypt(req, &sk.sg, &sk.sg, length, ivdata);
-    crypto_init_wait(&sk.wait);
-
-    /* encrypt data */
-    ret = aes_skcipher_encdec(&sk, option);
-    if (ret)
-        goto out;
-    pr_info("Encryption triggered successfully\n");
-
-out:
-    if (skcipher)
-        crypto_free_skcipher(skcipher);
-    if (req)
-        skcipher_request_free(req);
-    if (ivdata)
-        kfree(ivdata);
-    if (data)
-        kfree(data);
-    return ret;
+     crypto_free_skcipher(tfm);
+     return err;
 }
+
+
 
 static unsigned int remove_zero_bit(unsigned char *buf, unsigned int length)
 {
