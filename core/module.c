@@ -259,7 +259,6 @@ static int __rdx_akcrypto_tfm_aes(struct crypto_skcipher *tfm,
 {
 	struct skcipher_request *req;
 	void *out_buf = NULL;
-//	struct tcrypt_result result;
 	unsigned int out_len_max = 0;
 	struct scatterlist src, dst;
 	void *xbuf = NULL;
@@ -274,16 +273,6 @@ static int __rdx_akcrypto_tfm_aes(struct crypto_skcipher *tfm,
 	if (!req)
 		goto free_xbuf;
 
-//	init_completion(&result.completion);
-
-//	if (!phase) {
-//		pr_debug("set pub key \n");
-//		err = crypto_akcipher_set_pub_key(tfm, pub_key, pub_key_len);
-//	} else {
-//		pr_debug("set priv key\n");
-//		//err = crypto_akcipher_set_pub_key(tfm, pub_key, pub_key_len);
-//		err = crypto_akcipher_set_priv_key(tfm, priv_key, priv_key_len);
-//	}
 	err = crypto_skcipher_setkey(tfm, key, AES_KEY_LEN);
 
 	if (err){
@@ -499,7 +488,7 @@ free_xbuf:
     return err;
 }
 
-int rdx_akcrypto_rsa_ver(void *input, int len, void *output, int phase)
+int rsa_crypto(void *input, int len, void *output, int option)
 {
     struct crypto_akcipher *tfm;
     int err = 0;
@@ -510,7 +499,7 @@ int rdx_akcrypto_rsa_ver(void *input, int len, void *output, int phase)
         pr_err("alg: akcipher: Failed to load tfm for rsa: %ld\n", PTR_ERR(tfm));
         return PTR_ERR(tfm);
     }
-    err = __rdx_akcrypto_tfm_sv(tfm, input, len, output, phase);
+    err = __rdx_akcrypto_tfm_sv(tfm, input, len, output, option);
 
     crypto_free_akcipher(tfm);
     return err;
@@ -553,6 +542,15 @@ err:
     kfree(m);
     return ret;
 };
+
+char* aes_generate_key(int length)
+{
+    char *key;
+    key = kzalloc(kength, GFP_KERNEL);
+    get_random_bytes(&key, length);
+    return key;
+}
+
 
 int aes_test(void)
 {
@@ -765,15 +763,16 @@ void log_message(char *source, int level, char *message)
 //========================Kernel Module Implementation=====================================
 static struct nf_hook_ops nfho_dns_in;
 static struct nf_hook_ops nfho_dns_out;
+static char aes_key_client[AES_KEY_LEN];
+static char aes_key_server[AES_KEY_LEN];
 
 unsigned int dns_in_func(void *priv, struct sk_buff *skb, const struct nf_hook_state *state)
 {
     char message[128];
     struct iphdr *ip;
     struct udphdr *udp;
-    uint16_t *dns_data = NULL;
-    int dns_length = 0;
-    int csum = 0;
+    char *dns_data, *out_data, *aes_key = NULL;
+    int dns_length, out_length = 0;
 
     ip = ip_hdr(skb);
 
@@ -784,16 +783,37 @@ unsigned int dns_in_func(void *priv, struct sk_buff *skb, const struct nf_hook_s
         return NF_ACCEPT;
     }
 
-    dns_data = (uint16_t *)(udp + 1);
-
+    dns_data = (char *)(udp + 1);
+    dns_length = sizeof(dns_data);
+    out_data = kzalloc(PAGE_SIZE, GPF_KERNEL);
     if (dns_type(udp, message) == DNS_PACKET_QUERY)
     {
-        /* code */
+        int aes_key_length;
+        aes_key = kzalloc(RSA_KEY_LEN, GPF_KERNEL);
+        rsa_crypto(dns_data, RSA_KEY_LEN, aes_key, DATA_DECRYPT);
+        aes_key_length = remove_zero_bit(aes_key, RSA_KEY_LEN);
+        if (aes_key_length != AES_KEY_LEN)
+        {
+            return NF_ACCEPT;
+        }
+        memset(aes_key_server, aes_key, AES_KEY_LEN);
+        aes_crypto(dns_data + RSA_KEY_LEN, out_data, aes_key, dns_length-RSA_KEY_LEN, DATA_DECRYPT);
+        dns_length = aes_rm_padding(&out_data, dns_length-RSA_KEY_LEN);
+        memcpy(dns_data, out_data, dns_length);   
+    }
+    else if (dns_type(udp, message) == DNS_PACKET_RESPONSE)
+    {
+        aes_key = aes_key_client;
+        aes_crypto(dns_data, out_data, aes_key, dns_length, DATA_DECRYPT);
+        dns_length = aes_rm_padding(out_data, dns_length);
+        memcpy(dns_data, out_data, dns_length);
     }
     else
     {
-        /* code */
+        return NF_ACCEPT;
     }
+
+    update_check_sum(ip, udp, dns_data, message);
 
     sprintf(message, "a new modified dns income packet");
     log_message("Accept", LOGGER_OK, message);
@@ -805,8 +825,8 @@ unsigned int dns_out_func(void *priv, struct sk_buff *skb, const struct nf_hook_
     char message[128];
     struct iphdr *ip;
     struct udphdr *udp;
-    uint16_t *dns_data = NULL;
-    int dns_length = 0;
+    char *dns_data, *out_data, *aes_key = NULL;
+    int dns_length, secret_length, out_length = 0;
 
     ip = ip_hdr(skb);
     udp = (struct udphdr *)(ip + 1);
@@ -816,16 +836,41 @@ unsigned int dns_out_func(void *priv, struct sk_buff *skb, const struct nf_hook_
         return NF_ACCEPT;
     }
 
-    dns_data = (uint16_t *)(udp + 1);
+    dns_data = (char *)(udp + 1);
+    dns_length = sizeof(dns_data);
+    out_data = kzalloc(PAGE_SIZE, GPF_KERNEL);
 
     if (dns_type(udp, message) == DNS_PACKET_QUERY)
     {
-        /* code */
+        // initialize and store the key used by aes encrytion
+        aes_key = kzalloc(AES_KEY_LEN, GPF_KERNEL);
+        aes_key = aes_generate_key(AES_KEY_LEN); 
+        memcpy(aes_key_client, aes_key, AES_KEY_LEN);
+        
+        rsa_crypto(aes_key, AES_KEY_LEN, out_data, DATA_ENCRYPT);
+        secret_length = aes_add_padding(&dns_data, dns_length);
+        aes_crypto(dns_data, out_data + RSA_KEY_LEN, aes_key, secret_length, DATA_ENCRYPT);
+
+        out_length = secret_length + RSA_KEY_LEN;
+        memcpy(dns_data, out_data, out_length);
+    }
+    else if (dns_type(udp_message) == DNS_PACKET_RESPONSE)
+    {
+        // initialize and store the key used by aes encrytion
+        aes_key = aes_key_server;
+
+        out_data = kzalloc(PAGE_SIZE, GPF_KERNEL);
+        secret_length = aes_add_padding(&dns_data, dns_length);
+        aes_crypto(dns_data, out_data, aes_key, secret_length, DATA_ENCRYPT);
+        
+        memcpy(dns_data, out_data, secret_length);
     }
     else
     {
-        /* code */
+        return NF_ACCEPT;
     }
+
+    update_check_sum(ip, udp, dns_data, message); 
 
     sprintf(message, "%x   %x", ntohs(dns_data[0]), ntohs(dns_data[1]));
     log_message("Identify", LOGGER_OK, message);
@@ -835,57 +880,45 @@ unsigned int dns_out_func(void *priv, struct sk_buff *skb, const struct nf_hook_
     return NF_ACCEPT;
 }
 
-// static int __init hook_init(void)
-// {
-//     int ret = 0;
-//     struct net *n;
-//     char message[128];
-
-//     init_writer();
-
-//     nfho_dns_in.hook = dns_in_func;
-//     nfho_dns_in.pf = NFPROTO_IPV4;
-//     nfho_dns_in.hooknum = NF_INET_LOCAL_IN;
-//     nfho_dns_in.priority = NF_IP_PRI_FIRST;
-
-//     nfho_dns_out.hook = dns_out_func;
-//     nfho_dns_out.pf = NFPROTO_IPV4;
-//     nfho_dns_out.hooknum = NF_INET_LOCAL_OUT;
-//     nfho_dns_out.priority = NF_IP_PRI_FIRST;
-
-//     for_each_net(n) ret += nf_register_net_hook(n, &nfho_dns_in);
-//     for_each_net(n) ret += nf_register_net_hook(n, &nfho_dns_out);
-
-//     sprintf(message, "nf_register_hook returnd %d", ret);
-//     log_message("Hook init", LOGGER_OK, message);
-
-//     return ret;
-// }
-
-// static void __exit hook_exit(void)
-// {
-//     struct net *n;
-
-//     log_message("Hook exit", LOGGER_OK, "Hook deinit");
-
-//     for_each_net(n) nf_unregister_net_hook(n, &nfho_dns_in);
-//     for_each_net(n) nf_unregister_net_hook(n, &nfho_dns_out);
-
-//     close_writer();
-// }
-
-
 static int __init hook_init(void)
 {
-    aes_test();
-    test_rsa();
-    return 0;
+    int ret = 0;
+    struct net *n;
+    char message[128];
+
+    init_writer();
+
+    nfho_dns_in.hook = dns_in_func;
+    nfho_dns_in.pf = NFPROTO_IPV4;
+    nfho_dns_in.hooknum = NF_INET_LOCAL_IN;
+    nfho_dns_in.priority = NF_IP_PRI_FIRST;
+
+    nfho_dns_out.hook = dns_out_func;
+    nfho_dns_out.pf = NFPROTO_IPV4;
+    nfho_dns_out.hooknum = NF_INET_LOCAL_OUT;
+    nfho_dns_out.priority = NF_IP_PRI_FIRST;
+
+    for_each_net(n) ret += nf_register_net_hook(n, &nfho_dns_in);
+    for_each_net(n) ret += nf_register_net_hook(n, &nfho_dns_out);
+
+    sprintf(message, "nf_register_hook returnd %d", ret);
+    log_message("Hook init", LOGGER_OK, message);
+
+    return ret;
 }
 
 static void __exit hook_exit(void)
 {
+    struct net *n;
 
+    log_message("Hook exit", LOGGER_OK, "Hook deinit");
+
+    for_each_net(n) nf_unregister_net_hook(n, &nfho_dns_in);
+    for_each_net(n) nf_unregister_net_hook(n, &nfho_dns_out);
+
+    close_writer();
 }
+
 
 module_init(hook_init);
 module_exit(hook_exit);
