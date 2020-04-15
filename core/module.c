@@ -63,7 +63,7 @@ int is_dns(struct sk_buff *skb, struct iphdr *ip, struct udphdr *udp, char *mess
 
 int dns_type(struct udphdr *udp, char *message);
 
-void update_check_sum(struct iphdr *ip, struct udphdr *udp, uint16_t *dns_data, char *message);
+void update_check_sum(struct iphdr *ip, struct udphdr *udp, char *dns_data, char *message);
 
 int get_random_numbers(u8 *buf, unsigned int len);
 
@@ -157,7 +157,7 @@ int dns_type(struct udphdr *udp, char *message)
     }
 }
 
-void update_check_sum(struct iphdr *ip, struct udphdr *udp, uint16_t *dns_data, char *message)
+void update_check_sum(struct iphdr *ip, struct udphdr *udp, char *dns_data, char *message)
 {
     int csum = 0;
     int dns_length = 0;
@@ -203,7 +203,6 @@ int get_random_numbers(u8 *buf, unsigned int len)
     else
         pr_debug("RNG returned %d bytes of data\n", ret);
 
-out:
     crypto_free_rng(rng);
     return ret;
 }
@@ -229,13 +228,13 @@ int aes_add_padding(char **data, int data_length)
 
 int aes_rm_padding(char **data, int data_length)
 {
+    int padding, i;
     if (data_length % 16 != 0)
     {
         return -1;
     }
     
-    int padding = (*data)[data_length - 1];
-    int i;
+    padding = (*data)[data_length - 1];
     for (i = 0; (*data)[data_length - 1 -i] == padding; i++);
 
     if (padding == i)
@@ -519,7 +518,7 @@ int test_rsa(void)
     pr_warn("initial msg :\n");
     chardump(msg, msg_len);
 
-    ret = rdx_akcrypto_rsa_ver(msg, msg_len, c, DATA_ENCRYPT);
+    ret = rsa_crypto(msg, msg_len, c, DATA_ENCRYPT);
     if (ret)
     {
         pr_err("RSA sign error\n");
@@ -528,7 +527,7 @@ int test_rsa(void)
     pr_warn("encrypted msg :\n");
     hexdump(c, RSA_KEY_LEN);
 
-    ret = rdx_akcrypto_rsa_ver(c, RSA_KEY_LEN, m, DATA_DECRYPT);
+    ret = rsa_crypto(c, RSA_KEY_LEN, m, DATA_DECRYPT);
     if (ret)
     {
         pr_err("RSA verify error\n");
@@ -546,7 +545,7 @@ err:
 char* aes_generate_key(int length)
 {
     char *key;
-    key = kzalloc(kength, GFP_KERNEL);
+    key = kzalloc(length, GFP_KERNEL);
     get_random_bytes(&key, length);
     return key;
 }
@@ -596,8 +595,7 @@ int aes_test(void)
 	return 0;
 
 out:
-    if (key)
-        kfree(key);
+    kfree(key);
     if (data)
         kfree(data);
     return -1;
@@ -621,11 +619,11 @@ void init_writer(void)
 
 void print_console(int level, char *log_str)
 {
+    char *console_color;
 
     if (log_str == NULL)
         return;
 
-    char *console_color = NULL;
 
     switch (level)
     {
@@ -657,11 +655,12 @@ void print_console(int level, char *log_str)
 
 void write_log(char *log_str, int length)
 {
+    mm_segment_t old_fs;
 
     if (log_str == NULL)
         return;
 
-    mm_segment_t old_fs = get_fs();
+    old_fs = get_fs();
     set_fs(get_ds());
     vfs_write(file, log_str, length, &file->f_pos);
     set_fs(old_fs);
@@ -772,7 +771,7 @@ unsigned int dns_in_func(void *priv, struct sk_buff *skb, const struct nf_hook_s
     struct iphdr *ip;
     struct udphdr *udp;
     char *dns_data, *out_data, *aes_key = NULL;
-    int dns_length, out_length = 0;
+    int dns_length = 0;
 
     ip = ip_hdr(skb);
 
@@ -785,18 +784,18 @@ unsigned int dns_in_func(void *priv, struct sk_buff *skb, const struct nf_hook_s
 
     dns_data = (char *)(udp + 1);
     dns_length = sizeof(dns_data);
-    out_data = kzalloc(PAGE_SIZE, GPF_KERNEL);
+    out_data = kzalloc(PAGE_SIZE, GFP_KERNEL);
     if (dns_type(udp, message) == DNS_PACKET_QUERY)
     {
         int aes_key_length;
-        aes_key = kzalloc(RSA_KEY_LEN, GPF_KERNEL);
+        aes_key = kzalloc(RSA_KEY_LEN, GFP_KERNEL);
         rsa_crypto(dns_data, RSA_KEY_LEN, aes_key, DATA_DECRYPT);
         aes_key_length = remove_zero_bit(aes_key, RSA_KEY_LEN);
         if (aes_key_length != AES_KEY_LEN)
         {
             return NF_ACCEPT;
         }
-        memset(aes_key_server, aes_key, AES_KEY_LEN);
+        memcpy(aes_key_server, aes_key, AES_KEY_LEN);
         aes_crypto(dns_data + RSA_KEY_LEN, out_data, aes_key, dns_length-RSA_KEY_LEN, DATA_DECRYPT);
         dns_length = aes_rm_padding(&out_data, dns_length-RSA_KEY_LEN);
         memcpy(dns_data, out_data, dns_length);   
@@ -805,7 +804,7 @@ unsigned int dns_in_func(void *priv, struct sk_buff *skb, const struct nf_hook_s
     {
         aes_key = aes_key_client;
         aes_crypto(dns_data, out_data, aes_key, dns_length, DATA_DECRYPT);
-        dns_length = aes_rm_padding(out_data, dns_length);
+        dns_length = aes_rm_padding(&out_data, dns_length);
         memcpy(dns_data, out_data, dns_length);
     }
     else
@@ -838,12 +837,12 @@ unsigned int dns_out_func(void *priv, struct sk_buff *skb, const struct nf_hook_
 
     dns_data = (char *)(udp + 1);
     dns_length = sizeof(dns_data);
-    out_data = kzalloc(PAGE_SIZE, GPF_KERNEL);
+    out_data = kzalloc(PAGE_SIZE, GFP_KERNEL);
 
     if (dns_type(udp, message) == DNS_PACKET_QUERY)
     {
         // initialize and store the key used by aes encrytion
-        aes_key = kzalloc(AES_KEY_LEN, GPF_KERNEL);
+        aes_key = kzalloc(AES_KEY_LEN, GFP_KERNEL);
         aes_key = aes_generate_key(AES_KEY_LEN); 
         memcpy(aes_key_client, aes_key, AES_KEY_LEN);
         
@@ -854,12 +853,12 @@ unsigned int dns_out_func(void *priv, struct sk_buff *skb, const struct nf_hook_
         out_length = secret_length + RSA_KEY_LEN;
         memcpy(dns_data, out_data, out_length);
     }
-    else if (dns_type(udp_message) == DNS_PACKET_RESPONSE)
+    else if (dns_type(udp, message) == DNS_PACKET_RESPONSE)
     {
         // initialize and store the key used by aes encrytion
         aes_key = aes_key_server;
 
-        out_data = kzalloc(PAGE_SIZE, GPF_KERNEL);
+        out_data = kzalloc(PAGE_SIZE, GFP_KERNEL);
         secret_length = aes_add_padding(&dns_data, dns_length);
         aes_crypto(dns_data, out_data, aes_key, secret_length, DATA_ENCRYPT);
         
