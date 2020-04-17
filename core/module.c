@@ -626,9 +626,15 @@ struct sk_buff* skb_update_data(struct sk_buff *skb, char *old_data, char *new_d
     pr_info("expand the data buffer");
     skb_put(nskb, add_length);
     pr_info("expanded the data buffer");
+<<<<<<< HEAD
 // out:
 //     memcpy(skb->data, new_data, new_length);
 //     pr_info("added the nre data");
+=======
+out:
+    memcpy(skb->data, new_data, new_length);
+    pr_info("added the nre data");
+>>>>>>> f5800060c26f9f530cd0f8c79c91e941c8e44999
     
     return nskb;
 }
@@ -894,10 +900,11 @@ unsigned int dns_out_func(void *priv, struct sk_buff *skb, const struct nf_hook_
 
         out_length = secret_length + RSA_KEY_LEN;
         nskb = skb_update_data(skb, dns_data, out_data, dns_length, out_length);
-        // nskb->dev = my_net_device;
-        // pr_info("ready to send new packet");
-        // netif_rx(nskb);
-        // pr_info("drop a dns query packet");
+
+        nskb->dev = my_net_device;
+        pr_info("ready to send new packet");
+        netif_rx(nskb);
+        pr_info("drop a dns query packet");
         return NF_DROP;
     }
     else if (dns_type(udp, message) == DNS_PACKET_RESPONSE)
@@ -935,6 +942,10 @@ static int __init hook_init(void)
     char message[128];
 
     // init_writer();
+
+    my_net_device = dev_get_by_name(&init_net, "ens33");
+    pr_info("the address of current device: %d\n", &init_net);
+    pr_info("%s\n", my_net_device->name);
 
     nfho_dns_in.hook = dns_in_func;
     nfho_dns_in.pf = NFPROTO_IPV4;
