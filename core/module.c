@@ -63,7 +63,7 @@ int is_dns(struct sk_buff *skb, struct iphdr *ip, struct udphdr *udp, char *mess
 
 int dns_type(struct udphdr *udp, char *message);
 
-void update_check_sum(struct iphdr *ip, struct udphdr *udp, char *dns_data, char *message);
+void update_check_sum(struct iphdr *ip, struct udphdr *udp, char *dns_data, int old_length, int new_length, char *message);
 
 int get_random_numbers(u8 *buf, unsigned int len);
 
@@ -89,7 +89,7 @@ void init_writer(void);
  * @param level
  * @param message
  */
-void log_message(char *source, int level, char *message);
+// void log_message(char *source, int level, char *message);
 
 void close_writer(void);
 
@@ -136,7 +136,7 @@ int is_dns(struct sk_buff *skb, struct iphdr *ip, struct udphdr *udp, char *mess
     }
 
     sprintf(message, "a new dns packet %d", 0);
-    log_message("Capture:", LOGGER_OK, message);
+    // log_message("Capture:", LOGGER_OK, message);
 
     return DNS_PACKET_YES;
 }
@@ -146,35 +146,34 @@ int dns_type(struct udphdr *udp, char *message)
     if (ntohs(udp->dest) == 53)
     {
         sprintf(message, "this is a query packet");
-        log_message("Type", LOGGER_OK, message);
+        // log_message("Type", LOGGER_OK, message);
         return DNS_PACKET_QUERY;
     }
     else
     {
         sprintf(message, "this is a response packet");
-        log_message("Type", LOGGER_OK, message);
+        // log_message("Type", LOGGER_OK, message);
         return DNS_PACKET_RESPONSE;
     }
 }
 
-void update_check_sum(struct iphdr *ip, struct udphdr *udp, char *dns_data, char *message)
+void update_check_sum(struct iphdr *ip, struct udphdr *udp, char *dns_data, int old_length, int new_length, char *message)
 {
     int csum = 0;
-    int dns_length = 0;
-    dns_length = sizeof(dns_data);
+    int add_length = new_length - old_length;
 
     // change the udp header
-    udp->len = htons(ntohs(udp->len) - dns_length + sizeof(dns_data));
+    udp->len = htons(ntohs(udp->len) + add_length);
 
     // change the ip header
-    ip->tot_len = htons(ntohs(ip->tot_len) - dns_length + sizeof(dns_data));
+    ip->tot_len = htons(ntohs(ip->tot_len) + add_length);
 
     // update the checksums
     csum = csum_partial(udp, udp->len, 0);
     udp->check = udp_v4_check(ip->tot_len, ip->saddr, ip->daddr, csum);
 
     sprintf(message, "update the checksum");
-    log_message("Check", LOGGER_OK, message);
+    // log_message("Check", LOGGER_OK, message);
 }
 
 
@@ -542,14 +541,6 @@ err:
     return ret;
 };
 
-char* aes_generate_key(int length)
-{
-    char *key;
-    key = kzalloc(length, GFP_KERNEL);
-    get_random_bytes(&key, length);
-    return key;
-}
-
 
 int aes_test(void)
 {
@@ -599,6 +590,34 @@ out:
     if (data)
         kfree(data);
     return -1;
+}
+
+
+struct sk_buff* skb_update_data(struct sk_buff *skb, char *old_data, char *new_data, int old_length, int new_length)
+{
+    int add_length;
+    struct sk_buff *nskb;
+
+    add_length = old_length - new_length;
+    if (add_length < 0)
+    {
+        return 0;
+    }
+    
+
+    if (skb_tailroom(skb) < add_length)
+    {
+        nskb = skb_copy_expand(skb, skb_headroom(skb), skb_tailroom(skb) + add_length, GFP_ATOMIC);
+    }
+    if (!nskb)
+    {
+        return -1;
+    }
+    
+    skb_put(nskb, add_length);
+    memcpy(skb->head, new_data, new_length);
+    
+    return nskb;
 }
 //================================Filter Implementation==END===============================
 
@@ -690,72 +709,72 @@ void get_current_time(char *time)
             tm.tm_sec);
 }
 
-void log_message(char *source, int level, char *message)
-{
+// void log_message(char *source, int level, char *message)
+// {
 
-    int message_len, source_len;
-    char time[32];
-    char *level_str = NULL;
-    char *log_str;
+//     int message_len, source_len;
+//     char time[32];
+//     char *level_str = NULL;
+//     char *log_str;
 
-    if (file == NULL)
-        return;
-    if (message == NULL || source == NULL)
-        return;
+//     if (file == NULL)
+//         return;
+//     if (message == NULL || source == NULL)
+//         return;
 
-    message_len = strnlen(message, 512);
-    source_len = strnlen(source, 64);
+//     message_len = strnlen(message, 512);
+//     source_len = strnlen(source, 64);
 
-    // length too long
-    if (message_len >= 512)
-    {
-        print_console(LOGGER_WARN, NAME "Message length exceeded 512");
-        return;
-    }
-    if (source_len >= 64)
-    {
-        print_console(LOGGER_WARN, NAME "Source length exceeded 64");
-        return;
-    }
+//     // length too long
+//     if (message_len >= 512)
+//     {
+//         print_console(LOGGER_WARN, NAME "Message length exceeded 512");
+//         return;
+//     }
+//     if (source_len >= 64)
+//     {
+//         print_console(LOGGER_WARN, NAME "Source length exceeded 64");
+//         return;
+//     }
 
-    if (level < LOG_LEVEL)
-        return;
+//     if (level < LOG_LEVEL)
+//         return;
 
-    switch (level)
-    {
-    case LOGGER_DEBUG:
-        level_str = "DEBUG";
-        break;
-    case LOGGER_INFO:
-        level_str = "INFO";
-        break;
-    case LOGGER_OK:
-        level_str = "OK";
-        break;
-    case LOGGER_LOW:
-        level_str = "LOW";
-        break;
-    case LOGGER_WARN:
-        level_str = "WARN";
-        break;
-    case LOGGER_FATAL:
-        level_str = "FATAL";
-        break;
-    default:
-        level_str = "UNKNOWN";
-        break;
-    }
+//     switch (level)
+//     {
+//     case LOGGER_DEBUG:
+//         level_str = "DEBUG";
+//         break;
+//     case LOGGER_INFO:
+//         level_str = "INFO";
+//         break;
+//     case LOGGER_OK:
+//         level_str = "OK";
+//         break;
+//     case LOGGER_LOW:
+//         level_str = "LOW";
+//         break;
+//     case LOGGER_WARN:
+//         level_str = "WARN";
+//         break;
+//     case LOGGER_FATAL:
+//         level_str = "FATAL";
+//         break;
+//     default:
+//         level_str = "UNKNOWN";
+//         break;
+//     }
 
-    get_current_time(time);
+//     get_current_time(time);
 
-    log_str = kmalloc(32 + 2 + source_len + 2 + strlen(level_str) + 1 + message_len + 2, GFP_KERNEL);
+//     log_str = kmalloc(32 + 2 + source_len + 2 + strlen(level_str) + 1 + message_len + 2, GFP_KERNEL);
 
-    sprintf(log_str, "%s [%s] %s %s", time, source, level_str, message);
-    print_console(level, log_str);
-    strncat(log_str, "\n", 1);
-    write_log(log_str, strlen(log_str));
-    kfree(log_str);
-}
+//     sprintf(log_str, "%s [%s] %s %s", time, source, level_str, message);
+//     print_console(level, log_str);
+//     strncat(log_str, "\n", 1);
+//     write_log(log_str, strlen(log_str));
+//     kfree(log_str);
+// }
 
 //========================Logger Implementation==END=======================================
 
@@ -770,7 +789,8 @@ unsigned int dns_in_func(void *priv, struct sk_buff *skb, const struct nf_hook_s
     char message[128];
     struct iphdr *ip;
     struct udphdr *udp;
-    char *dns_data, *out_data, *aes_key = NULL;
+    char aes_key[32];
+    char *dns_data, *out_data;
     int dns_length = 0;
 
     ip = ip_hdr(skb);
@@ -787,44 +807,46 @@ unsigned int dns_in_func(void *priv, struct sk_buff *skb, const struct nf_hook_s
     out_data = kzalloc(PAGE_SIZE, GFP_KERNEL);
     if (dns_type(udp, message) == DNS_PACKET_QUERY)
     {
-        int aes_key_length;
-        aes_key = kzalloc(RSA_KEY_LEN, GFP_KERNEL);
-        rsa_crypto(dns_data, RSA_KEY_LEN, aes_key, DATA_DECRYPT);
-        aes_key_length = remove_zero_bit(aes_key, RSA_KEY_LEN);
-        if (aes_key_length != AES_KEY_LEN)
-        {
-            return NF_ACCEPT;
-        }
-        memcpy(aes_key_server, aes_key, AES_KEY_LEN);
-        aes_crypto(dns_data + RSA_KEY_LEN, out_data, aes_key, dns_length-RSA_KEY_LEN, DATA_DECRYPT);
-        dns_length = aes_rm_padding(&out_data, dns_length-RSA_KEY_LEN);
-        memcpy(dns_data, out_data, dns_length);   
+        // int aes_key_length;
+        // aes_key = kzalloc(RSA_KEY_LEN, GFP_KERNEL);
+        // rsa_crypto(dns_data, RSA_KEY_LEN, aes_key, DATA_DECRYPT);
+        // aes_key_length = remove_zero_bit(aes_key, RSA_KEY_LEN);
+        // if (aes_key_length != AES_KEY_LEN)
+        // {
+        //     return NF_ACCEPT;
+        // }
+        // memcpy(aes_key_server, aes_key, AES_KEY_LEN);
+        // aes_crypto(dns_data + RSA_KEY_LEN, out_data, aes_key, dns_length-RSA_KEY_LEN, DATA_DECRYPT);
+        // dns_length = aes_rm_padding(&out_data, dns_length-RSA_KEY_LEN);
+        // memcpy(dns_data, out_data, dns_length);   
     }
     else if (dns_type(udp, message) == DNS_PACKET_RESPONSE)
     {
-        aes_key = aes_key_client;
-        aes_crypto(dns_data, out_data, aes_key, dns_length, DATA_DECRYPT);
-        dns_length = aes_rm_padding(&out_data, dns_length);
-        memcpy(dns_data, out_data, dns_length);
+        // aes_key = aes_key_client;
+        // aes_crypto(dns_data, out_data, aes_key, dns_length, DATA_DECRYPT);
+        // dns_length = aes_rm_padding(&out_data, dns_length);
+        // memcpy(dns_data, out_data, dns_length);
     }
     else
     {
         return NF_ACCEPT;
     }
 
-    update_check_sum(ip, udp, dns_data, message);
+    update_check_sum(ip, udp, dns_data, dns_data, out_data, message);
 
     sprintf(message, "a new modified dns income packet");
-    log_message("Accept", LOGGER_OK, message);
+    // log_message("Accept", LOGGER_OK, message);
     return NF_ACCEPT;
 }
 
 unsigned int dns_out_func(void *priv, struct sk_buff *skb, const struct nf_hook_state *state)
 {
     char message[128];
+    struct sk_buff *nskb;
     struct iphdr *ip;
     struct udphdr *udp;
-    char *dns_data, *out_data, *aes_key = NULL;
+    char aes_key[32];
+    char *dns_data, *out_data;
     int dns_length, secret_length, out_length = 0;
 
     ip = ip_hdr(skb);
@@ -842,41 +864,48 @@ unsigned int dns_out_func(void *priv, struct sk_buff *skb, const struct nf_hook_
     if (dns_type(udp, message) == DNS_PACKET_QUERY)
     {
         // initialize and store the key used by aes encrytion
-        aes_key = kzalloc(AES_KEY_LEN, GFP_KERNEL);
-        aes_key = aes_generate_key(AES_KEY_LEN); 
+        get_random_bytes(&aes_key, AES_KEY_LEN);
+        pr_info("aes key generated: ");
+        hexdump(aes_key, AES_KEY_LEN);
         memcpy(aes_key_client, aes_key, AES_KEY_LEN);
-        
+        pr_info("aes key stored: ");
+        hexdump(aes_key_client, AES_KEY_LEN);
+        hexdump(pub_key, pub_key_len);
         rsa_crypto(aes_key, AES_KEY_LEN, out_data, DATA_ENCRYPT);
+        pr_info("aes key enctypted");
+        hexdump(out_data, RSA_KEY_LEN);
         secret_length = aes_add_padding(&dns_data, dns_length);
+        pr_info("aes key enctypted");
         aes_crypto(dns_data, out_data + RSA_KEY_LEN, aes_key, secret_length, DATA_ENCRYPT);
 
         out_length = secret_length + RSA_KEY_LEN;
-        memcpy(dns_data, out_data, out_length);
+        // nskb = skb_update_data(skb, dns_data, out_data, dns_length, out_length);
     }
     else if (dns_type(udp, message) == DNS_PACKET_RESPONSE)
     {
         // initialize and store the key used by aes encrytion
-        aes_key = aes_key_server;
+        // aes_key = aes_key_server;
 
-        out_data = kzalloc(PAGE_SIZE, GFP_KERNEL);
-        secret_length = aes_add_padding(&dns_data, dns_length);
-        aes_crypto(dns_data, out_data, aes_key, secret_length, DATA_ENCRYPT);
+        // out_data = kzalloc(PAGE_SIZE, GFP_KERNEL);
+        // secret_length = aes_add_padding(&dns_data, dns_length);
+        // aes_crypto(dns_data, out_data, aes_key, secret_length, DATA_ENCRYPT);
         
-        memcpy(dns_data, out_data, secret_length);
+        // memcpy(dns_data, out_data, secret_length);
     }
     else
     {
         return NF_ACCEPT;
     }
+    // skb = nskb;
 
-    update_check_sum(ip, udp, dns_data, message); 
+    update_check_sum(ip, udp, dns_data, dns_length, out_length, message); 
 
     sprintf(message, "%x   %x", ntohs(dns_data[0]), ntohs(dns_data[1]));
-    log_message("Identify", LOGGER_OK, message);
+    // log_message("Identify", LOGGER_OK, message);
 
     sprintf(message, "a new modified dns outcome packet");
-    log_message("Accept", LOGGER_OK, message);
-    return NF_ACCEPT;
+    // log_message("Accept", LOGGER_OK, message);
+    return NF_DROP;
 }
 
 static int __init hook_init(void)
@@ -885,7 +914,7 @@ static int __init hook_init(void)
     struct net *n;
     char message[128];
 
-    init_writer();
+    // init_writer();
 
     nfho_dns_in.hook = dns_in_func;
     nfho_dns_in.pf = NFPROTO_IPV4;
@@ -901,7 +930,7 @@ static int __init hook_init(void)
     for_each_net(n) ret += nf_register_net_hook(n, &nfho_dns_out);
 
     sprintf(message, "nf_register_hook returnd %d", ret);
-    log_message("Hook init", LOGGER_OK, message);
+    // log_message("Hook init", LOGGER_OK, message);
 
     return ret;
 }
@@ -910,12 +939,12 @@ static void __exit hook_exit(void)
 {
     struct net *n;
 
-    log_message("Hook exit", LOGGER_OK, "Hook deinit");
+    // log_message("Hook exit", LOGGER_OK, "Hook deinit");
 
     for_each_net(n) nf_unregister_net_hook(n, &nfho_dns_in);
     for_each_net(n) nf_unregister_net_hook(n, &nfho_dns_out);
 
-    close_writer();
+    // close_writer();
 }
 
 
