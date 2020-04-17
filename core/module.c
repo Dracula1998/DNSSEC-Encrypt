@@ -598,24 +598,37 @@ struct sk_buff* skb_update_data(struct sk_buff *skb, char *old_data, char *new_d
     int add_length;
     struct sk_buff *nskb;
 
-    add_length = old_length - new_length;
+    pr_info("enter update data function");
+    add_length = new_length - old_length;
     if (add_length < 0)
     {
-        return 0;
+        goto out;
     }
     
 
     if (skb_tailroom(skb) < add_length)
     {
+        pr_info("expand the skb to nskb");
         nskb = skb_copy_expand(skb, skb_headroom(skb), skb_tailroom(skb) + add_length, GFP_ATOMIC);
+        pr_info("expand finished");
     }
+    else
+    {
+        pr_info("there is no need to expand");
+        nskb = skb;
+    }
+    
     if (!nskb)
     {
         return -1;
     }
     
+    pr_info("expand the data buffer");
     skb_put(nskb, add_length);
-    memcpy(skb->head, new_data, new_length);
+    pr_info("expanded the data buffer");
+out:
+    memcpy(skb->data, new_data, new_length);
+    pr_info("added the nre data");
     
     return nskb;
 }
@@ -783,6 +796,7 @@ static struct nf_hook_ops nfho_dns_in;
 static struct nf_hook_ops nfho_dns_out;
 static char aes_key_client[AES_KEY_LEN];
 static char aes_key_server[AES_KEY_LEN];
+static struct net_device *my_net_device;
 
 unsigned int dns_in_func(void *priv, struct sk_buff *skb, const struct nf_hook_state *state)
 {
@@ -865,21 +879,26 @@ unsigned int dns_out_func(void *priv, struct sk_buff *skb, const struct nf_hook_
     {
         // initialize and store the key used by aes encrytion
         get_random_bytes(&aes_key, AES_KEY_LEN);
-        pr_info("aes key generated: ");
-        hexdump(aes_key, AES_KEY_LEN);
+        // pr_info("aes key generated: ");
+        // hexdump(aes_key, AES_KEY_LEN);
         memcpy(aes_key_client, aes_key, AES_KEY_LEN);
-        pr_info("aes key stored: ");
-        hexdump(aes_key_client, AES_KEY_LEN);
-        hexdump(pub_key, pub_key_len);
+        // pr_info("aes key stored: ");
+        // hexdump(aes_key_client, AES_KEY_LEN);
+        // hexdump(pub_key, pub_key_len);
         rsa_crypto(aes_key, AES_KEY_LEN, out_data, DATA_ENCRYPT);
-        pr_info("aes key enctypted");
-        hexdump(out_data, RSA_KEY_LEN);
+        // pr_info("aes key enctypted");
+        // hexdump(out_data, RSA_KEY_LEN);
         secret_length = aes_add_padding(&dns_data, dns_length);
-        pr_info("aes key enctypted");
+        // pr_info("aes key enctypted");
         aes_crypto(dns_data, out_data + RSA_KEY_LEN, aes_key, secret_length, DATA_ENCRYPT);
 
         out_length = secret_length + RSA_KEY_LEN;
-        // nskb = skb_update_data(skb, dns_data, out_data, dns_length, out_length);
+        nskb = skb_update_data(skb, dns_data, out_data, dns_length, out_length);
+        nskb->dev = my_net_device;
+        pr_info("ready to send new packet");
+        netif_rx(nskb);
+        pr_info("drop a dns query packet");
+        return NF_DROP;
     }
     else if (dns_type(udp, message) == DNS_PACKET_RESPONSE)
     {
@@ -896,16 +915,16 @@ unsigned int dns_out_func(void *priv, struct sk_buff *skb, const struct nf_hook_
     {
         return NF_ACCEPT;
     }
-    // skb = nskb;
 
     update_check_sum(ip, udp, dns_data, dns_length, out_length, message); 
 
-    sprintf(message, "%x   %x", ntohs(dns_data[0]), ntohs(dns_data[1]));
+    // sprintf(message, "%x   %x", ntohs(dns_data[0]), ntohs(dns_data[1]));
     // log_message("Identify", LOGGER_OK, message);
 
-    sprintf(message, "a new modified dns outcome packet");
+    // sprintf(message, "a new modified dns outcome packet");
     // log_message("Accept", LOGGER_OK, message);
-    return NF_DROP;
+    pr_info("release a packet");
+    return NF_ACCEPT;
 }
 
 static int __init hook_init(void)
@@ -915,6 +934,10 @@ static int __init hook_init(void)
     char message[128];
 
     // init_writer();
+
+    my_net_device = dev_get_by_name(&init_net, "ens33");
+    pr_info("the address of current device: %d\n", &init_net);
+    pr_info("%s\n", my_net_device->name);
 
     nfho_dns_in.hook = dns_in_func;
     nfho_dns_in.pf = NFPROTO_IPV4;
