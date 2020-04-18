@@ -626,15 +626,13 @@ struct sk_buff* skb_update_data(struct sk_buff *skb, char *old_data, char *new_d
     pr_info("expand the data buffer");
     skb_put(nskb, add_length);
     pr_info("expanded the data buffer");
-<<<<<<< HEAD
-// out:
+
+
+out:
 //     memcpy(skb->data, new_data, new_length);
 //     pr_info("added the nre data");
-=======
-out:
-    memcpy(skb->data, new_data, new_length);
-    pr_info("added the nre data");
->>>>>>> f5800060c26f9f530cd0f8c79c91e941c8e44999
+
+
     
     return nskb;
 }
