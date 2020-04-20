@@ -358,7 +358,7 @@ int aes_crypto(void *input, void *output, unsigned char *key, int len, int optio
 
 
 
-static unsigned int remove_zero_bit(unsigned char *buf, unsigned int length)
+static unsigned int remove_zero_bit(char *buf, int length)
 {
     int i;
     int text_length;
@@ -600,11 +600,6 @@ struct sk_buff* skb_update_data(struct sk_buff *skb, char *old_data, char *new_d
 
     pr_info("enter update data function");
     add_length = new_length - old_length;
-    if (add_length < 0)
-    {
-        goto out;
-    }
-    
 
     if (skb_tailroom(skb) < add_length)
     {
@@ -724,72 +719,72 @@ void get_current_time(char *time)
             tm.tm_sec);
 }
 
-// void log_message(char *source, int level, char *message)
-// {
+void log_message(char *source, int level, char *message)
+{
 
-//     int message_len, source_len;
-//     char time[32];
-//     char *level_str = NULL;
-//     char *log_str;
+    int message_len, source_len;
+    char time[32];
+    char *level_str = NULL;
+    char *log_str;
 
-//     if (file == NULL)
-//         return;
-//     if (message == NULL || source == NULL)
-//         return;
+    if (file == NULL)
+        return;
+    if (message == NULL || source == NULL)
+        return;
 
-//     message_len = strnlen(message, 512);
-//     source_len = strnlen(source, 64);
+    message_len = strnlen(message, 512);
+    source_len = strnlen(source, 64);
 
-//     // length too long
-//     if (message_len >= 512)
-//     {
-//         print_console(LOGGER_WARN, NAME "Message length exceeded 512");
-//         return;
-//     }
-//     if (source_len >= 64)
-//     {
-//         print_console(LOGGER_WARN, NAME "Source length exceeded 64");
-//         return;
-//     }
+    // length too long
+    if (message_len >= 512)
+    {
+        print_console(LOGGER_WARN, NAME "Message length exceeded 512");
+        return;
+    }
+    if (source_len >= 64)
+    {
+        print_console(LOGGER_WARN, NAME "Source length exceeded 64");
+        return;
+    }
 
-//     if (level < LOG_LEVEL)
-//         return;
+    if (level < LOG_LEVEL)
+        return;
 
-//     switch (level)
-//     {
-//     case LOGGER_DEBUG:
-//         level_str = "DEBUG";
-//         break;
-//     case LOGGER_INFO:
-//         level_str = "INFO";
-//         break;
-//     case LOGGER_OK:
-//         level_str = "OK";
-//         break;
-//     case LOGGER_LOW:
-//         level_str = "LOW";
-//         break;
-//     case LOGGER_WARN:
-//         level_str = "WARN";
-//         break;
-//     case LOGGER_FATAL:
-//         level_str = "FATAL";
-//         break;
-//     default:
-//         level_str = "UNKNOWN";
-//         break;
-//     }
+    switch (level)
+    {
+    case LOGGER_DEBUG:
+        level_str = "DEBUG";
+        break;
+    case LOGGER_INFO:
+        level_str = "INFO";
+        break;
+    case LOGGER_OK:
+        level_str = "OK";
+        break;
+    case LOGGER_LOW:
+        level_str = "LOW";
+        break;
+    case LOGGER_WARN:
+        level_str = "WARN";
+        break;
+    case LOGGER_FATAL:
+        level_str = "FATAL";
+        break;
+    default:
+        level_str = "UNKNOWN";
+        break;
+    }
 
-//     get_current_time(time);
+    get_current_time(time);
 
-//     log_str = kmalloc(32 + 2 + source_len + 2 + strlen(level_str) + 1 + message_len + 2, GFP_KERNEL);
+    log_str = kmalloc(32 + 2 + source_len + 2 + strlen(level_str) + 1 + message_len + 2, GFP_KERNEL);
 
-//     sprintf(log_str, "%s [%s] %s %s", time, source, level_str, message);
-//     print_console(level, log_str);
-//     strncat(log_str, "\n", 1);
-//     write_log(log_str, strlen(log_str));
-//     kfree(log_str);
-// }
+    sprintf(log_str, "%s [%s] %s %s", time, source, level_str, message);
+    print_console(level, log_str);
+    strncat(log_str, "\n", 1);
+    write_log(log_str, strlen(log_str));
+    kfree(log_str);
+}
 
 //========================Logger Implementation==END=======================================
 
@@ -799,6 +794,8 @@ static struct nf_hook_ops nfho_dns_out;
 static char aes_key_client[AES_KEY_LEN];
 static char aes_key_server[AES_KEY_LEN];
 static struct net_device *my_net_device;
+int out = 0;
+int in = 0;
 
 unsigned int dns_in_func(void *priv, struct sk_buff *skb, const struct nf_hook_state *state)
 {
@@ -806,8 +803,8 @@ unsigned int dns_in_func(void *priv, struct sk_buff *skb, const struct nf_hook_s
     struct iphdr *ip;
     struct udphdr *udp;
     char aes_key[32];
-    char *dns_data, *out_data;
-    int dns_length = 0;
+    char *dns_data, *in_data, *out_data;
+    int dns_length, out_length = 0;
 
     ip = ip_hdr(skb);
 
@@ -818,24 +815,34 @@ unsigned int dns_in_func(void *priv, struct sk_buff *skb, const struct nf_hook_s
         return NF_ACCEPT;
     }
 
-    dns_data = (char *)(udp + 1);
-    dns_length = sizeof(dns_data);
+    dns_data = (char *)(udp + 1) + 2;
+    dns_length = skb->tail - 28 - 2;
+    in_data = kzalloc(PAGE_SIZE, GFP_KERNEL);
     out_data = kzalloc(PAGE_SIZE, GFP_KERNEL);
 
     if (dns_type(udp, message) == DNS_PACKET_QUERY)
     {
-        // int aes_key_length;
-        // aes_key = kzalloc(RSA_KEY_LEN, GFP_KERNEL);
-        // rsa_crypto(dns_data, RSA_KEY_LEN, aes_key, DATA_DECRYPT);
-        // aes_key_length = remove_zero_bit(aes_key, RSA_KEY_LEN);
-        // if (aes_key_length != AES_KEY_LEN)
+        // if (in != 0)
         // {
         //     return NF_ACCEPT;
         // }
-        // memcpy(aes_key_server, aes_key, AES_KEY_LEN);
-        // aes_crypto(dns_data + RSA_KEY_LEN, out_data, aes_key, dns_length-RSA_KEY_LEN, DATA_DECRYPT);
-        // dns_length = aes_rm_padding(&out_data, dns_length-RSA_KEY_LEN);
-        // memcpy(dns_data, out_data, dns_length);   
+        // in += 1;
+        pr_info("in function: \n");
+        hexdump(dns_data-2, 2);
+        pr_info("tail: %d\n", skb->tail);
+        hexdump(skb->head, skb->tail);
+        hexdump(dns_data, RSA_KEY_LEN);
+        rsa_crypto(dns_data, RSA_KEY_LEN, in_data, DATA_DECRYPT);
+        dns_length = remove_zero_bit(in_data, RSA_KEY_LEN);
+        // pr_info("dns length: %d\n", dns_length);
+        hexdump(dns_data, RSA_KEY_LEN);
+        pr_info("in aes key:");
+        hexdump(in_data, AES_KEY_LEN);
+        out_length = dns_length - AES_KEY_LEN;
+        memcpy(aes_key_server, in_data, AES_KEY_LEN);
+        skb_update_data(skb, dns_data, in_data + AES_KEY_LEN, RSA_KEY_LEN, out_length);
+        memcpy(dns_data, in_data + AES_KEY_LEN, out_length);   
+        hexdump(skb->head, skb->tail);
     }
     else if (dns_type(udp, message) == DNS_PACKET_RESPONSE)
     {
@@ -843,14 +850,16 @@ unsigned int dns_in_func(void *priv, struct sk_buff *skb, const struct nf_hook_s
         // aes_crypto(dns_data, out_data, aes_key, dns_length, DATA_DECRYPT);
         // dns_length = aes_rm_padding(&out_data, dns_length);
         // memcpy(dns_data, out_data, dns_length);
+        return NF_ACCEPT;
     }
     else
     {
         return NF_ACCEPT;
     }
 
-    update_check_sum(ip, udp, dns_data, dns_data, out_data, message);
-
+    // pr_info("skb tail: %d\n", skb->tail);
+    update_check_sum(ip, udp, dns_data, dns_length, out_length, message);
+    // hexdump(skb->head, skb->tail);
     sprintf(message, "a new modified dns income packet");
     // log_message("Accept", LOGGER_OK, message);
     return NF_ACCEPT;
@@ -871,7 +880,7 @@ unsigned int dns_out_func(void *priv, struct sk_buff *skb, const struct nf_hook_
 
     if (is_dns(skb, ip, udp, message) == DNS_PACKET_NO)
     {
-        return NF_ACCEPT;
+        return NF_DROP;
     }
 
     dns_data = (char *)(udp + 1) + 2;
@@ -881,30 +890,30 @@ unsigned int dns_out_func(void *priv, struct sk_buff *skb, const struct nf_hook_
 
     if (dns_type(udp, message) == DNS_PACKET_QUERY)
     {
-        hexdump(dns_data, 2);
-        pr_info("dns data: %d\n", dns_length);
-        pr_info("skb data: %d\n", skb->data);
-        pr_info("dns data: %d\n", dns_data);
-        pr_info("skb tail: %d\n", skb->tail);
-        pr_info("data len: %d\n", skb->data_len);
-        pr_info("skb leng: %d\n", skb->len);
-        pr_info("skb end: %d\n", skb->end);
-        pr_info("tail length: %d\n", skb_tailroom(skb));
-        pr_info("the accessible space: %d\n", dns_length + skb_tailroom(skb));
-        // initialize and store the key used by aes encrytion
+        // if (out != 0)
+        // {
+        //     return NF_DROP;
+        // }
+        // out += 1;
+        
+        pr_info("out function: \n");
+        // hexdump(skb->head, skb->tail);
+        hexdump(dns_data-2, 2);
+        pr_info("tail: %d\n", skb->tail);
+        hexdump(skb->head, skb->tail);
         
         get_random_bytes(&aes_key, AES_KEY_LEN);
+        pr_info("out aes key:");
+        hexdump(aes_key, AES_KEY_LEN);
         // pr_info("aes key generated: ");
-        // hexdump(aes_key, AES_KEY_LEN);
         memcpy(aes_key_client, aes_key, AES_KEY_LEN);
         memcpy(in_data, aes_key, AES_KEY_LEN);
         memcpy(in_data + AES_KEY_LEN, dns_data, dns_length);
         in_length = AES_KEY_LEN + dns_length;
         // pr_info("aes key stored: ");
-        // hexdump(aes_key_client, AES_KEY_LEN);
-        // hexdump(pub_key, pub_key_len);
         rsa_crypto(in_data, in_length, out_data, DATA_ENCRYPT);
         out_length = RSA_KEY_LEN;
+        hexdump(out_data, out_length);
         // pr_info("aes key enctypted");
         // hexdump(out_data, RSA_KEY_LEN);
         // secret_length = aes_add_padding(&dns_data, dns_length);
@@ -912,11 +921,13 @@ unsigned int dns_out_func(void *priv, struct sk_buff *skb, const struct nf_hook_
         // aes_crypto(dns_data, out_data + RSA_KEY_LEN, aes_key, secret_length, DATA_ENCRYPT);
 
         nskb = skb_update_data(skb, dns_data, out_data, dns_length, out_length);
-        pr_info("skb tail: %d\n", skb->tail);
+        // pr_info("skb tail: %d\n", skb->tail);
         // nskb->dev = my_net_device;
         // pr_info("ready to send new packet");
         // netif_rx(nskb);
         // pr_info("drop a dns query packet");
+        update_check_sum(ip, udp, dns_data, dns_length, out_length, message); 
+        hexdump(skb->head, skb->tail);
     }
     else if (dns_type(udp, message) == DNS_PACKET_RESPONSE)
     {
@@ -928,6 +939,7 @@ unsigned int dns_out_func(void *priv, struct sk_buff *skb, const struct nf_hook_
         // aes_crypto(dns_data, out_data, aes_key, secret_length, DATA_ENCRYPT);
         
         // memcpy(dns_data, out_data, secret_length);
+        return NF_ACCEPT;
     }
     else
     {
@@ -935,15 +947,14 @@ unsigned int dns_out_func(void *priv, struct sk_buff *skb, const struct nf_hook_
     }
 
     // memcpy(dns_data, out_data, out_length);
-    // update_check_sum(ip, udp, dns_data, dns_length, out_length, message); 
 
     // sprintf(message, "%x   %x", ntohs(dns_data[0]), ntohs(dns_data[1]));
     // log_message("Identify", LOGGER_OK, message);
 
     // sprintf(message, "a new modified dns outcome packet");
     // log_message("Accept", LOGGER_OK, message);
-    hexdump(nskb->head, nskb->tail);
-    pr_info("release a packet");
+    // hexdump(nskb->head, nskb->tail);
+    pr_info("release a packet\n");
     return NF_ACCEPT;
 }
 
