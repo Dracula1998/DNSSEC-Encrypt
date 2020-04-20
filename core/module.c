@@ -419,19 +419,19 @@ static int __rdx_akcrypto_tfm_sv(struct crypto_akcipher *tfm,
 
     if (phase)
     {
-        pr_debug("set pub key \n");
+        pr_info("set pub key \n");
         err = crypto_akcipher_set_pub_key(tfm, pub_key, pub_key_len);
     }
     else
     {
-        pr_debug("set priv key\n");
+        pr_info("set priv key\n");
         //err = crypto_akcipher_set_pub_key(tfm, pub_key, pub_key_len);
         err = crypto_akcipher_set_priv_key(tfm, priv_key, priv_key_len);
     }
 
     if (err)
     {
-        pr_err("set key error! err: %d phase: %d\n", err, phase);
+        pr_err("set rsa key error! err: %d phase: %d\n", err, phase);
         goto free_req;
     }
 
@@ -620,7 +620,7 @@ struct sk_buff* skb_update_data(struct sk_buff *skb, char *old_data, char *new_d
     
     if (!nskb)
     {
-        return -1;
+        return NULL;
     }
     
     pr_info("expand the data buffer");
@@ -629,10 +629,8 @@ struct sk_buff* skb_update_data(struct sk_buff *skb, char *old_data, char *new_d
 
 
 out:
-//     memcpy(skb->data, new_data, new_length);
-//     pr_info("added the nre data");
-
-
+    memcpy(old_data, new_data, new_length);
+    pr_info("added the new data");
     
     return nskb;
 }
@@ -823,6 +821,7 @@ unsigned int dns_in_func(void *priv, struct sk_buff *skb, const struct nf_hook_s
     dns_data = (char *)(udp + 1);
     dns_length = sizeof(dns_data);
     out_data = kzalloc(PAGE_SIZE, GFP_KERNEL);
+
     if (dns_type(udp, message) == DNS_PACKET_QUERY)
     {
         // int aes_key_length;
@@ -864,8 +863,8 @@ unsigned int dns_out_func(void *priv, struct sk_buff *skb, const struct nf_hook_
     struct iphdr *ip;
     struct udphdr *udp;
     char aes_key[32];
-    char *dns_data, *out_data;
-    int dns_length, secret_length, out_length = 0;
+    char *dns_data, *in_data, *out_data;
+    int dns_length, secret_length, in_length, out_length = 0;
 
     ip = ip_hdr(skb);
     udp = (struct udphdr *)(ip + 1);
@@ -875,35 +874,49 @@ unsigned int dns_out_func(void *priv, struct sk_buff *skb, const struct nf_hook_
         return NF_ACCEPT;
     }
 
-    dns_data = (char *)(udp + 1);
-    dns_length = sizeof(dns_data);
+    dns_data = (char *)(udp + 1) + 2;
+    dns_length = skb->tail - 28 - 2;
+    in_data = kzalloc(PAGE_SIZE, GFP_KERNEL);
     out_data = kzalloc(PAGE_SIZE, GFP_KERNEL);
 
     if (dns_type(udp, message) == DNS_PACKET_QUERY)
     {
+        hexdump(dns_data, 2);
+        pr_info("dns data: %d\n", dns_length);
+        pr_info("skb data: %d\n", skb->data);
+        pr_info("dns data: %d\n", dns_data);
+        pr_info("skb tail: %d\n", skb->tail);
+        pr_info("data len: %d\n", skb->data_len);
+        pr_info("skb leng: %d\n", skb->len);
+        pr_info("skb end: %d\n", skb->end);
+        pr_info("tail length: %d\n", skb_tailroom(skb));
+        pr_info("the accessible space: %d\n", dns_length + skb_tailroom(skb));
         // initialize and store the key used by aes encrytion
+        
         get_random_bytes(&aes_key, AES_KEY_LEN);
         // pr_info("aes key generated: ");
         // hexdump(aes_key, AES_KEY_LEN);
         memcpy(aes_key_client, aes_key, AES_KEY_LEN);
+        memcpy(in_data, aes_key, AES_KEY_LEN);
+        memcpy(in_data + AES_KEY_LEN, dns_data, dns_length);
+        in_length = AES_KEY_LEN + dns_length;
         // pr_info("aes key stored: ");
         // hexdump(aes_key_client, AES_KEY_LEN);
         // hexdump(pub_key, pub_key_len);
-        rsa_crypto(aes_key, AES_KEY_LEN, out_data, DATA_ENCRYPT);
+        rsa_crypto(in_data, in_length, out_data, DATA_ENCRYPT);
+        out_length = RSA_KEY_LEN;
         // pr_info("aes key enctypted");
         // hexdump(out_data, RSA_KEY_LEN);
-        secret_length = aes_add_padding(&dns_data, dns_length);
+        // secret_length = aes_add_padding(&dns_data, dns_length);
         // pr_info("aes key enctypted");
-        aes_crypto(dns_data, out_data + RSA_KEY_LEN, aes_key, secret_length, DATA_ENCRYPT);
+        // aes_crypto(dns_data, out_data + RSA_KEY_LEN, aes_key, secret_length, DATA_ENCRYPT);
 
-        out_length = secret_length + RSA_KEY_LEN;
         nskb = skb_update_data(skb, dns_data, out_data, dns_length, out_length);
-
+        pr_info("skb tail: %d\n", skb->tail);
         // nskb->dev = my_net_device;
         // pr_info("ready to send new packet");
         // netif_rx(nskb);
         // pr_info("drop a dns query packet");
-        return NF_DROP;
     }
     else if (dns_type(udp, message) == DNS_PACKET_RESPONSE)
     {
@@ -921,14 +934,15 @@ unsigned int dns_out_func(void *priv, struct sk_buff *skb, const struct nf_hook_
         return NF_ACCEPT;
     }
 
-    memcpy(dns_data, out_data, out_length);
-    update_check_sum(ip, udp, dns_data, dns_length, out_length, message); 
+    // memcpy(dns_data, out_data, out_length);
+    // update_check_sum(ip, udp, dns_data, dns_length, out_length, message); 
 
     // sprintf(message, "%x   %x", ntohs(dns_data[0]), ntohs(dns_data[1]));
     // log_message("Identify", LOGGER_OK, message);
 
     // sprintf(message, "a new modified dns outcome packet");
     // log_message("Accept", LOGGER_OK, message);
+    hexdump(nskb->head, nskb->tail);
     pr_info("release a packet");
     return NF_ACCEPT;
 }
