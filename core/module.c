@@ -924,8 +924,6 @@ unsigned int dns_out_func(void *priv, struct sk_buff *skb, const struct nf_hook_
         memcpy(in_data + AES_KEY_LEN, dns_data, dns_length);
         in_length = AES_KEY_LEN + dns_length;
         // pr_info("aes key stored: ");
-        // hexdump(aes_key_client, AES_KEY_LEN);
-        // hexdump(pub_key, pub_key_len);
         rsa_crypto(in_data, in_length, out_data, DATA_ENCRYPT);
         out_length = RSA_KEY_LEN;
         nskb = skb_update_data(skb, dns_data, out_data, dns_length, out_length);
