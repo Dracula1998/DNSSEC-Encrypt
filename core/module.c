@@ -820,6 +820,12 @@ unsigned int dns_in_func(void *priv, struct sk_buff *skb, const struct nf_hook_s
 
     ip = ip_hdr(skb);
 
+    if (ip->saddr == *(__be32*)target_ip || ip->daddr == *(__be32*)target_ip);
+    {
+        return NF_ACCEPT;
+    }
+    
+
     udp = (struct udphdr *)(ip + 1);
 
     if (is_dns(skb, ip, udp, message) == DNS_PACKET_NO)
@@ -894,6 +900,12 @@ unsigned int dns_out_func(void *priv, struct sk_buff *skb, const struct nf_hook_
     int dns_length, secret_length, in_length, out_length = 0;
 
     ip = ip_hdr(skb);
+
+    if (ip->saddr == *(__be32*)target_ip || ip->daddr == *(__be32*)target_ip);
+    {
+        return NF_ACCEPT;
+    }
+
     udp = (struct udphdr *)(ip + 1);
 
     if (is_dns(skb, ip, udp, message) == DNS_PACKET_NO)
