@@ -820,7 +820,7 @@ unsigned int dns_in_func(void *priv, struct sk_buff *skb, const struct nf_hook_s
 
     ip = ip_hdr(skb);
 
-    if (ip->saddr == *(__be32*)target_ip || ip->daddr == *(__be32*)target_ip);
+    if (ip->saddr != *(__be32*)target_ip && ip->daddr != *(__be32*)target_ip);
     {
         return NF_ACCEPT;
     }
@@ -901,7 +901,7 @@ unsigned int dns_out_func(void *priv, struct sk_buff *skb, const struct nf_hook_
 
     ip = ip_hdr(skb);
 
-    if (ip->saddr == *(__be32*)target_ip || ip->daddr == *(__be32*)target_ip);
+    if (ip->saddr != *(__be32*)target_ip && ip->daddr != *(__be32*)target_ip);
     {
         return NF_ACCEPT;
     }
@@ -1021,8 +1021,8 @@ static int __init hook_init(void)
 
     // for_each_net(n) ret += nf_register_net_hook(n, &nfho_dns_in1);
     // for_each_net(n) ret += nf_register_net_hook(n, &nfho_dns_in2);
+    for_each_net(n) ret += nf_register_net_hook(n, &nfho_dns_in1);
     for_each_net(n) ret += nf_register_net_hook(n, &nfho_dns_out1);
-    for_each_net(n) ret += nf_register_net_hook(n, &nfho_dns_out2);
 
     sprintf(message, "nf_register_hook returnd %d", ret);
     // log_message("Hook init", LOGGER_OK, message);
