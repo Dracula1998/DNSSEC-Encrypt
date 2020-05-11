@@ -163,6 +163,4 @@ unsigned char *pub_key =
 
 int pub_key_len = 140;
 
-static unsigned char* target_ip = "\x7f\x00\x00\x01";
-
 #endif //FIREWALL_CONSTANTS_H

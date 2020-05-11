@@ -51,25 +51,151 @@ struct skcipher_def {
 };
 
 /**
- * this method is used to verify whether the packet is a dns packet
+ * this function is used to verify whether the packet is a dns packet
  * 
  * @param skb the target data pack
  * @param ip the ip pack
  * @param udp the udp pack
  * @param message  a buffer used to place log message
+ * 
+ * @return  DNS_PACKET_YES  this is a dns packet
+ *          DNS_PACKET_NO   this is not a dns packet
  *  
  */
 int is_dns(struct sk_buff *skb, struct iphdr *ip, struct udphdr *udp, char *message);
 
+
+/**
+ * used to check whether the packet is a query packet or a response packet
+ * 
+ * @param udp the target udp packet
+ * @param message a buffer used to place log message
+ * 
+ * @return  DNS_PACKET_QUERY    this is a dns query packet
+ *          DNS_PACKET_RESPONSE this is a dns response packet
+ * 
+ */
 int dns_type(struct udphdr *udp, char *message);
 
+
+/**
+ * used to update the checksum of the packet after modify the packet
+ * 
+ * @param skb the target skb packet
+ * @param ip the ip header
+ * @param udp the udp packet
+ * @param dns_data the dns data in the packet
+ * @param old_length the length of old dns data
+ * @param new_length the length of new dns data
+ * 
+ */ 
 void update_check_sum(struct sk_buff *skb, struct iphdr *ip, struct udphdr *udp, char *dns_data, int old_length, int new_length, char *message);
 
+
+/**
+ * used to fill a buffer use random numbers
+ * 
+ * @param buf the target buffer
+ * @param len the length of the target buffer
+ */
 int get_random_numbers(u8 *buf, unsigned int len);
 
-int aes_add_padding(char *data_in, char *data_out, int data_length); 
+
+/**
+ * used to add padding(PKCS7) to data, which will be used to be encrypt by AES
+ * 
+ * @param data_in the input data buffer
+ * @param data_out the output data buffer
+ * @param data_length the length of the input data
+ * 
+ * @return the length of the data after padding
+ */
+int aes_add_padding(char *data_in, char *data_out, int data_length);
+
+
+/**
+ * remove padding of data decrypted by AES
+ * 
+ * @param data_in the input data buffer
+ * @param data_out the output data buffer
+ * @param data_length the length of the input data
+ * 
+ * @return the length of the data without padding
+ */
 int aes_rm_padding(char *data_in, char *data_out, int data_length);
+
+
+/**
+ * print a buffer in hex form
+ * 
+ * @param buf the target buffer
+ * @param len the length of data
+ * 
+ */
 void hexdump(unsigned char *buf, unsigned int len);
+
+
+/**
+ * 
+ * use AES to encrypt or decrypt data, the iv is set to 0
+ * 
+ * @param input input data buffer
+ * @param output output data buffer
+ * @param key a 256bit AES key
+ * @param len the length of input data
+ * @param option encrypt or decrypt the data(DATA_ENCRYPT, DATA_DECRYPT)
+ * 
+ */
+int aes_crypto(void *input, void *output, unsigned char *key, int len, int option);
+
+
+/**
+ *
+ * remove the zero bits in high bit of data decrypted by RSA
+ * 
+ * @param buf the target data buffer
+ * @param length the length of data
+ * 
+ * @return the length of the output data
+ */
+static unsigned int remove_zero_bit(char *buf, int length);
+
+
+/**
+ * use RSA to encrypt or decrypt data
+ * 
+ * @param input input data buffer
+ * @param output output data buffer
+ * @param len the length of input data
+ * @param option encrypt or decrypt the data(DATA_ENCRYPT, DATA_DECRYPT)
+ */
+int rsa_crypto(void *input, int len, void *output, int option);
+
+
+/**
+ * replace old data in a packet with new data
+ * 
+ * @param skb the target skb packet
+ * @param old_data address of the old data
+ * @param new_data the buffer of the new data
+ * @param old_length length of old data
+ * @param new_length length of new data
+ * 
+ * @return the modified skb_buff
+ */
+struct sk_buff* skb_update_data(struct sk_buff *skb, char *old_data, char *new_data, int old_length, int new_length);
+
+
+/**
+ * the default function used to decrypt the incoming dns data
+ */
+unsigned int dns_in_func(void *priv, struct sk_buff *skb, const struct nf_hook_state *state);
+
+
+/**
+ * the default functon used to encrypt the outgoing dns data
+ */
+unsigned int dns_out_func(void *priv, struct sk_buff *skb, const struct nf_hook_state *state);
 
 
 
@@ -159,7 +285,6 @@ int dns_type(struct udphdr *udp, char *message)
 
 void update_check_sum(struct sk_buff *skb, struct iphdr *ip, struct udphdr *udp, char *dns_data, int old_length, int new_length, char *message)
 {
-    int csum = 0;
     int add_length = new_length - old_length;
 
     // change the udp header
@@ -215,27 +340,29 @@ int get_random_numbers(u8 *buf, unsigned int len)
 
 int aes_add_padding(char *data_in, char *data_out, int data_length)
 {
-    int padding, tmp_length;
+    int padding, out_length;
 
     if (data_length % BLK_SIZE == 0)
     {
-        memcpy(data_out, data_in, data_length);
-        return data_length;
+        padding = BLK_SIZE;
     }
-    
-    padding = BLK_SIZE - data_length % BLK_SIZE;
-    tmp_length = padding + data_length;
+    else
+    {
+        padding = BLK_SIZE - data_length % BLK_SIZE;
+    }
+
+    out_length = padding + data_length;
     memcpy(data_out, data_in, data_length);
     memset(data_out + data_length, padding, padding);
 
-    return tmp_length;
+    return out_length;
 }
 
 
 int aes_rm_padding(char *data_in, char* data_out, int data_length)
 {
     int padding, i, out_length;
-    if (data_length % 16 != 0)
+    if (data_length % BLK_SIZE != 0)
     {
         memcpy(data_out, data_in, data_length);
         return -1;
@@ -244,29 +371,21 @@ int aes_rm_padding(char *data_in, char* data_out, int data_length)
     padding = data_in[data_length - 1];
     for (i = 0; data_in[data_length - 1 -i] == padding; i++);
 
-    if (padding == i)
+    if (padding <= i)
     {
-        out_length = data_length - i;
+        out_length = data_length - padding;
         memcpy(data_out, data_in, out_length);
         return out_length;
     }      
     else
     {
-        if (i == 1)
-        {
-            memcpy(data_out, data_in, data_length);
-            return data_length;
-        }
-        else
-        {
-            return -1;
-        }    
+        return -1;    
     }
 }
 
 
 static int __rdx_akcrypto_tfm_aes(struct crypto_skcipher *tfm,
-			void *input, void *output, unsigned char *key, int len, int phase)
+			void *input, void *output, unsigned char *key, int len, int option)
 {
 	struct skcipher_request *req;
 	void *out_buf = NULL;
@@ -287,11 +406,11 @@ static int __rdx_akcrypto_tfm_aes(struct crypto_skcipher *tfm,
 	err = crypto_skcipher_setkey(tfm, key, AES_KEY_LEN);
 
 	if (err){
-		pr_err("set key error! err: %d phase: %d\n", err, phase);
+		pr_err("set key error! err: %d phase: %d\n", err, option);
 		goto free_req;
 	}
 
-	/* IV will be random */
+	/* IV will be zero */
 	ivdata = kzalloc(AES_IV_LEN, GFP_KERNEL);
 
 
@@ -319,7 +438,8 @@ static int __rdx_akcrypto_tfm_aes(struct crypto_skcipher *tfm,
 //    akcipher_request_set_callback(req, CRYPTO_TFM_REQ_MAY_BACKLOG,
 //                               tcrypt_complete, &result);
 
-	if (phase) { //sign phase
+	if (option) { 
+        //encrypt option
 		//err = wait_async_op(&result, crypto_akcipher_encrypt(req));
 		pr_warn ("start enc\n");
 		err =  crypto_skcipher_encrypt(req);
@@ -330,7 +450,8 @@ static int __rdx_akcrypto_tfm_aes(struct crypto_skcipher *tfm,
 		pr_debug("after encrypt in out_buf:\n");
 		//hexdump(out_buf, out_len_max);
 		memcpy(output, out_buf, len);
-	} else { //verification phase
+	} else { 
+        //decrypt option
 		pr_warn("dec start\n");
 		//err = wait_async_op(&result, crypto_akcipher_decrypt(req));
 		err =  crypto_skcipher_decrypt(req);
@@ -386,6 +507,7 @@ static unsigned int remove_zero_bit(char *buf, int length)
 
     return 0;
 }
+
 
 void hexdump(unsigned char *buf, unsigned int len)
 {
@@ -636,9 +758,8 @@ struct sk_buff* skb_update_data(struct sk_buff *skb, char *old_data, char *new_d
     pr_info("expanded the data buffer");
 
 
-out:
     memcpy(old_data, new_data, new_length);
-    pr_info("added the new data");
+    pr_info("added the new data \n");
     
     return nskb;
 }
@@ -805,7 +926,6 @@ void log_message(char *source, int level, char *message)
 // static char aes_key_client[AES_KEY_LEN];
 // static char aes_key_server[AES_KEY_LEN];
 static char aes_key[AES_KEY_LEN];
-//static struct net_device *my_net_device;
 int out = 0;
 int in = 0;
 
@@ -819,13 +939,7 @@ unsigned int dns_in_func(void *priv, struct sk_buff *skb, const struct nf_hook_s
     int dns_length, out_length = 0;
 
     ip = ip_hdr(skb);
-
-    if (ip->saddr != *(__be32*)target_ip && ip->daddr != *(__be32*)target_ip);
-    {
-        return NF_ACCEPT;
-    }
     
-
     udp = (struct udphdr *)(ip + 1);
 
     if (is_dns(skb, ip, udp, message) == DNS_PACKET_NO)
@@ -833,6 +947,7 @@ unsigned int dns_in_func(void *priv, struct sk_buff *skb, const struct nf_hook_s
         return NF_STOP;
     }
 
+    // find the dns data of the packet
     dns_data = (char *)(udp + 1) + 2;
     dns_length = skb->tail - 44 - 2;
     in_data = kzalloc(PAGE_SIZE, GFP_KERNEL);
@@ -840,52 +955,49 @@ unsigned int dns_in_func(void *priv, struct sk_buff *skb, const struct nf_hook_s
 
     if (dns_type(udp, message) == DNS_PACKET_QUERY)
     {
-        // if (in != 0)
-        // {
-        //     return NF_DROP;
-        // }
-        // in += 1;
-        pr_info("in function: \n");
+        pr_info("start to decrypt query message: \n");
+        pr_info("transcation id: ");
         hexdump(dns_data-2, 2);
-        pr_info("head: %d\n", skb->head);
-        pr_info("data: %d\n", skb->data);
-        pr_info("tail: %d\n", skb->tail);
-        pr_info("end:  %d\n", skb->end);
-        // hexdump(skb->head, skb->tail);
-        // hexdump(dns_data, RSA_KEY_LEN);
+        // pr_info("tail: %d\n", skb->tail);
+        // pr_info("end:  %d\n", skb->end);
+        pr_info("secret data: \n");
+        hexdump(dns_data, dns_length);
         rsa_crypto(dns_data, RSA_KEY_LEN, in_data, DATA_DECRYPT);
         dns_length = remove_zero_bit(in_data, RSA_KEY_LEN);
-        // pr_info("dns length: %d\n", dns_length);
-        hexdump(dns_data, RSA_KEY_LEN);
-        pr_info("in aes key: \n");
-        hexdump(in_data, AES_KEY_LEN);
-        pr_info("in dns data: \n");
-        hexdump(in_data + AES_KEY_LEN, dns_length-AES_KEY_LEN);
+        // hexdump(dns_data, RSA_KEY_LEN);
+        // pr_info("in aes key: \n");
+        // hexdump(in_data, AES_KEY_LEN);
         out_length = dns_length - AES_KEY_LEN;
-        // memcpy(aes_key_server, in_data, AES_KEY_LEN);
         skb_update_data(skb, dns_data, in_data + AES_KEY_LEN, RSA_KEY_LEN, out_length);
-        // memcpy(dns_data, in_data + AES_KEY_LEN, out_length);   
-        hexdump(skb->head, skb->tail);
+        // hexdump(skb->head, skb->tail);
+
+        pr_info("plain data: \n");
+        hexdump(dns_data, out_length);
+
         return NF_ACCEPT;
     }
     else if (dns_type(udp, message) == DNS_PACKET_RESPONSE)
     {
-        pr_info("aes decrypt\n");
+        pr_info("start to decrypt response message: \n");
+        pr_info("transcation id: ");
+        hexdump(dns_data-2, 2);
+        pr_info("secret data: \n");
+        hexdump(dns_data, dns_length);
         // aes_key = aes_key_client;
-        pr_info("aes key len: \n");
-        hexdump(aes_key, AES_KEY_LEN);
+        // pr_info("aes key len: \n");
+        // hexdump(aes_key, AES_KEY_LEN);
         aes_crypto(dns_data, in_data, aes_key, dns_length, DATA_DECRYPT);
         out_length = aes_rm_padding(in_data, out_data, dns_length);
         skb_update_data(skb, dns_data, out_data, dns_length, out_length);
-        // memcpy(dns_data, out_data, dns_length);
+
+        pr_info("plain data: \n");
+        hexdump(dns_data, out_length);
+
         return NF_ACCEPT;
     }
 
-    // pr_info("skb tail: %d\n", skb->tail);
-    // update_check_sum(ip, udp, dns_data, dns_length, out_length, message);
-    // hexdump(skb->head, skb->tail);
     sprintf(message, "a new modified dns income packet");
-    // log_message("Accept", LOGGER_OK, message);
+    log_message("Accept", LOGGER_OK, message);
     return NF_STOP;
 }
 
@@ -895,16 +1007,10 @@ unsigned int dns_out_func(void *priv, struct sk_buff *skb, const struct nf_hook_
     struct sk_buff *nskb;
     struct iphdr *ip;
     struct udphdr *udp;
-    // char aes_key[32];
     char *dns_data, *in_data, *out_data;
-    int dns_length, secret_length, in_length, out_length = 0;
+    int dns_length, in_length, out_length = 0;
 
     ip = ip_hdr(skb);
-
-    if (ip->saddr != *(__be32*)target_ip && ip->daddr != *(__be32*)target_ip);
-    {
-        return NF_ACCEPT;
-    }
 
     udp = (struct udphdr *)(ip + 1);
 
@@ -920,26 +1026,16 @@ unsigned int dns_out_func(void *priv, struct sk_buff *skb, const struct nf_hook_
 
     if (dns_type(udp, message) == DNS_PACKET_QUERY)
     {
-        // if (out != 0)
-        // {
-        //     return NF_ACCEPT;
-        // }
-        // out += 1;
         
-        pr_info("out function: \n");
+        pr_info("start to encrypt query message: \n");
+        pr_info("transcation id: ");
         hexdump(dns_data-2, 2);
-        pr_info("head: %d\n", skb->head);
-        pr_info("data: %d\n", skb->data);
-        pr_info("tail: %d\n", skb->tail);
-        pr_info("end:  %d\n", skb->end);
-        hexdump(skb->head, skb->tail);
+        pr_info("plain data: \n");
+        hexdump(dns_data, dns_length);
+        // pr_info("tail: %d\n", skb->tail);
+        // pr_info("end:  %d\n", skb->end);
+        // hexdump(skb->head, skb->tail);
 
-        // initialize and store the key used by aes encrytion
-        
-        // get_random_bytes(&aes_key, AES_KEY_LEN);
-        // pr_info("aes key generated: ");
-        // hexdump(aes_key, AES_KEY_LEN);
-        // memcpy(aes_key_client, aes_key, AES_KEY_LEN);
         memcpy(in_data, aes_key, AES_KEY_LEN);
         memcpy(in_data + AES_KEY_LEN, dns_data, dns_length);
         in_length = AES_KEY_LEN + dns_length;
@@ -948,20 +1044,28 @@ unsigned int dns_out_func(void *priv, struct sk_buff *skb, const struct nf_hook_
         out_length = RSA_KEY_LEN;
         nskb = skb_update_data(skb, dns_data, out_data, dns_length, out_length);
         // update_check_sum(skb, ip, udp, dns_data, dns_length, out_length, message); 
-        hexdump(skb->head, skb->tail);
+        // hexdump(skb->head, skb->tail);
+        pr_info("secret data: \n");
+        hexdump(dns_data, out_length);
         return NF_ACCEPT;
     }
     else if (dns_type(udp, message) == DNS_PACKET_RESPONSE)
     {
+        pr_info("start to encrypt response message: \n");
+        pr_info("transcation id: ");
+        hexdump(dns_data-2, 2);
+        pr_info("plain data: \n");
+        hexdump(dns_data, dns_length);
         // initialize and store the key used by aes encrytion
         // aes_key = aes_key_server;
-        pr_info("aes encrypt\n");
-        pr_info("aes key len: \n");
-        hexdump(aes_key, AES_KEY_LEN);
+        // pr_info("aes key: \n");
+        // hexdump(aes_key, AES_KEY_LEN);
         out_length = aes_add_padding(dns_data, in_data, dns_length);
         aes_crypto(in_data, out_data, aes_key, out_length, DATA_ENCRYPT);
         skb_update_data(skb, dns_data, out_data, dns_length, out_length);
-        // memcpy(dns_data, out_data, secret_length);
+
+        pr_info("secret data: \n");
+        hexdump(dns_data, out_length);
         return NF_ACCEPT;
     }
     else
@@ -969,20 +1073,11 @@ unsigned int dns_out_func(void *priv, struct sk_buff *skb, const struct nf_hook_
         return NF_STOP;
     }
 
-    // memcpy(dns_data, out_data, out_length);
-    
-    // sprintf(message, "%x   %x", ntohs(dns_data[0]), ntohs(dns_data[1]));
-    // log_message("Identify", LOGGER_OK, message);
-
-    // sprintf(message, "a new modified dns outcome packet");
-    // log_message("Accept", LOGGER_OK, message);
-    // hexdump(nskb->head, nskb->tail);
     pr_info("release a packet\n");
     return NF_STOP;
 }
 
-static struct nf_hook_ops nfho_dns_in1;
-static struct nf_hook_ops nfho_dns_in2;
+static struct nf_hook_ops nfho_dns_in;
 static struct nf_hook_ops nfho_dns_out1;
 static struct nf_hook_ops nfho_dns_out2;
 
@@ -992,20 +1087,12 @@ static int __init hook_init(void)
     struct net *n;
     char message[128];
 
-    // init_writer();
+    init_writer();
 
-    // my_net_device = dev_get_by_name(&init_net, "ens33");
-    // pr_info("the address of current device: %d\n", &init_net);
-    // pr_info("%s\n", my_net_device->name);
-    nfho_dns_in1.hook = dns_out_func;
-    nfho_dns_in1.pf = NFPROTO_IPV4;
-    nfho_dns_in1.hooknum = NF_INET_LOCAL_IN;
-    nfho_dns_in1.priority = NF_IP_PRI_FIRST;
-
-    nfho_dns_in2.hook = dns_in_func;
-    nfho_dns_in2.pf = NFPROTO_IPV4;
-    nfho_dns_in2.hooknum = NF_INET_LOCAL_IN;
-    nfho_dns_in2.priority = 0;
+    nfho_dns_in.hook = dns_out_func;
+    nfho_dns_in.pf = NFPROTO_IPV4;
+    nfho_dns_in.hooknum = NF_INET_LOCAL_IN;
+    nfho_dns_in.priority = NF_IP_PRI_FIRST;
 
     nfho_dns_out1.hook = dns_out_func;
     nfho_dns_out1.pf = NFPROTO_IPV4;
@@ -1019,13 +1106,12 @@ static int __init hook_init(void)
 
     get_random_bytes(aes_key, AES_KEY_LEN);
 
-    // for_each_net(n) ret += nf_register_net_hook(n, &nfho_dns_in1);
-    // for_each_net(n) ret += nf_register_net_hook(n, &nfho_dns_in2);
-    for_each_net(n) ret += nf_register_net_hook(n, &nfho_dns_in1);
+    // for_each_net(n) ret += nf_register_net_hook(n, &nfho_dns_in);
     for_each_net(n) ret += nf_register_net_hook(n, &nfho_dns_out1);
+    for_each_net(n) ret += nf_register_net_hook(n, &nfho_dns_out2);
 
     sprintf(message, "nf_register_hook returnd %d", ret);
-    // log_message("Hook init", LOGGER_OK, message);
+    log_message("Hook init", LOGGER_OK, message);
 
     return ret;
 }
@@ -1034,14 +1120,13 @@ static void __exit hook_exit(void)
 {
     struct net *n;
 
-    // log_message("Hook exit", LOGGER_OK, "Hook deinit");
+    log_message("Hook exit", LOGGER_OK, "Hook deinit");
 
-    // for_each_net(n) nf_unregister_net_hook(n, &nfho_dns_in1);
-    // for_each_net(n) nf_unregister_net_hook(n, &nfho_dns_in2);
+    // for_each_net(n) nf_unregister_net_hook(n, &nfho_dns_in);
     for_each_net(n) nf_unregister_net_hook(n, &nfho_dns_out1);
     for_each_net(n) nf_unregister_net_hook(n, &nfho_dns_out2);
 
-    // close_writer();
+    close_writer();
 }
 
 
